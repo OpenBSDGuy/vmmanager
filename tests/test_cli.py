@@ -25,6 +25,12 @@ class CliTests(unittest.TestCase):
             self.assertEqual(main([]), 1)
         self.assertIn("vmmanager only runs on OpenBSD", err.getvalue())
 
+    def test_launches_app_on_openbsd(self):
+        with mock.patch("platform.system", return_value="OpenBSD"), \
+                mock.patch("vmmanager.cli.VmmApp") as app:
+            self.assertEqual(main([]), 0)
+        app.return_value.run.assert_called_once_with()
+
     def test_man_flag_calls_view(self):
         with mock.patch("vmmanager.manpages.view", return_value=0) as view, \
                 mock.patch("platform.system", return_value="Linux"):

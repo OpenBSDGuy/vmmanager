@@ -6,6 +6,7 @@ from vmmanager import __version__, manpages
 from vmmanager.errors import VmmError
 from vmmanager.layout import Layout
 from vmmanager.system import System
+from vmmanager.ui.app import VmmApp
 
 
 def _fail(e: VmmError) -> int:
@@ -40,4 +41,5 @@ def main(argv: list[str] | None = None) -> int:
             return _fail(e)
         print(f"Installed man pages in {manpages.MAN_DIR}")
         return 0
-    return 0  # Task 13
+    VmmApp(System(), Layout()).run()
+    return 0
