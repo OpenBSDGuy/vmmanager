@@ -1,0 +1,5 @@
+   ID   PID VCPUS  MAXMEM  CURMEM     TTY        OWNER    STATE NAME
+    4 51234     1    1.0G    512M   ttyp3        alice  running web
+    5 51300     2    2.0G    1.0G   ttyp4         root   paused db
+
+vmctl: warning text
