@@ -12,6 +12,7 @@ touched) to docs/screenshot.svg. The README uses a PNG, since PyPI can't show SV
     magick docs/screenshot.png -trim +repage docs/screenshot.png
 """
 import asyncio
+import re
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -55,7 +56,18 @@ async def main() -> None:
                         break
                 await pilot.press("down", "down")  # rows sort by name: select "legacy" so its hint shows
                 await pilot.pause()
-                app.save_screenshot(filename=OUT.name, path=str(OUT.parent))
+                OUT.write_text(xfce_frame(app.export_screenshot()))
+
+
+def xfce_frame(svg: str) -> str:
+    """Swap Textual's macOS-style traffic lights for XFCE-style buttons on the right."""
+    width = float(re.search(r'viewBox="0 0 ([\d.]+)', svg).group(1))
+    buttons = "".join(
+        f'<text fill="#c5c8c6" font-size="18" text-anchor="middle" x="{width - 26 - 30 * i:.0f}" y="28">{glyph}</text>'
+        for i, glyph in enumerate("×□–"))  # close is rightmost
+    svg, n = re.subn(r'<g transform="translate\(26,22\)">.*?</g>', buttons, svg, count=1, flags=re.S)
+    assert n == 1, "Textual's window chrome changed; update xfce_frame()"
+    return svg.replace('rx="8"', 'rx="3"', 1)
 
 
 if __name__ == "__main__":
