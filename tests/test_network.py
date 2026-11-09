@@ -6,7 +6,7 @@ from pathlib import Path
 from tests.fakes import FakeSystem
 from vmmanager.errors import VmmError
 from vmmanager.layout import Layout
-from vmmanager.network import ANCHOR_RULES, net_status, pf_lines, setup_network
+from vmmanager.network import ANCHOR_RULES, net_status, pf_lines, setup_explanation, setup_network
 from vmmanager.system import Result
 
 PF = "set skip on lo\npass\n"
@@ -32,7 +32,7 @@ class NetworkTests(unittest.TestCase):
         st = net_status(self.sys, self.layout)
         self.assertEqual((st.anchor_file, st.forwarding, st.resolver), (False, False, False))
         self.assertFalse(st.ok)
-        self.assertEqual(st.setup_explanation.count("\n- ") + 1, 3)
+        self.assertEqual(setup_explanation(st).count("\n- ") + 1, 3)
         self.assertFalse(any(root for _, root in self.sys.calls))
 
     def test_setup_appends_pf_lines_once_and_loads(self):
@@ -54,6 +54,34 @@ class NetworkTests(unittest.TestCase):
         self.assertIn("syntax error", cm.exception.detail)
         self.assertEqual(self.layout.pf_conf.read_text(), PF)
         self.assertFalse(self.layout.pf_anchor.exists())
+
+    def test_setup_rolls_back_when_pfctl_load_fails(self):
+        self.sys.responses[("pfctl", "-f")] = Result(1, "", "load failed")
+        with self.assertRaises(VmmError) as cm:
+            setup_network(self.sys, self.layout)
+        self.assertIn("load failed", cm.exception.detail)
+        self.assertEqual(self.layout.pf_conf.read_text(), PF)
+        self.assertFalse(self.layout.pf_anchor.exists())
+
+    def test_setup_refuses_missing_pf_conf(self):
+        self.layout.pf_conf.unlink()
+        with self.assertRaises(VmmError) as cm:
+            setup_network(self.sys, self.layout)
+        self.assertIn("pf.conf not found", cm.exception.message)
+        self.assertFalse(self.layout.pf_conf.exists())
+        self.assertFalse(self.layout.pf_anchor.exists())
+
+    def test_sysctl_conf_appended_even_when_forwarding_already_on(self):
+        self.sys.responses[("sysctl", "-n")] = Result(0, "1\n", "")
+        setup_network(self.sys, self.layout)
+        self.assertEqual(self.layout.sysctl_conf.read_text(), "net.inet.ip.forwarding=1\n")
+        self.assertNotIn(["sysctl", "net.inet.ip.forwarding=1"], self.argvs())
+
+    def test_runtime_forwarding_set_without_touching_saved_sysctl_conf(self):
+        self.layout.sysctl_conf.write_text("net.inet.ip.forwarding=1\n")
+        setup_network(self.sys, self.layout)
+        self.assertEqual(self.layout.sysctl_conf.read_text(), "net.inet.ip.forwarding=1\n")
+        self.assertIn(["sysctl", "net.inet.ip.forwarding=1"], self.argvs())
 
     def test_setup_skips_present_pieces(self):
         self.layout.pf_conf.write_text(PF + pf_lines(self.layout))
@@ -79,8 +107,9 @@ class NetworkTests(unittest.TestCase):
         self.layout.pf_anchor.parent.mkdir()
         self.layout.pf_anchor.write_text(ANCHOR_RULES)
         self.sys.responses[("sysctl", "-n")] = Result(0, "1\n", "")
-        text = net_status(self.sys, self.layout).setup_explanation
+        text = setup_explanation(net_status(self.sys, self.layout))
         self.assertIn("unwind", text)
+        self.assertEqual(setup_explanation(net_status(self.sys, self.layout)).count("\n"), 0)
         self.assertNotIn("forwarding", text)
         self.assertNotIn("NAT", text)
 
