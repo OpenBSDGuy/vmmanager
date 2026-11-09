@@ -89,10 +89,8 @@ class MessageScreen(Dialog):
 
 
 class IsoTree(DirectoryTree):
-    # Fixed height so the tree scrolls itself (fits a 24-line console); no extension
-    # styling: Textual's matches from the first dot and italic shows as a highlight.
+    # No extension styling: Textual's matches from the first dot and italic shows as a highlight.
     DEFAULT_CSS = """
-    IsoTree { height: 16; }
     IsoTree > .directory-tree--extension, IsoTree:ansi > .directory-tree--extension {
         text-style: none;
     }
@@ -108,6 +106,11 @@ class IsoTree(DirectoryTree):
 class IsoPickerScreen(Dialog):
     """Browse for an install image; dismisses with its path or None."""
 
+    # Box fills the screen and the tree takes the rest, so only the tree ever scrolls.
+    DEFAULT_CSS = """
+    IsoPickerScreen #box { height: 90%; }
+    IsoPickerScreen IsoTree { height: 1fr; }
+    """
     AUTO_FOCUS = "IsoTree"
     BINDINGS = [("full_stop", "toggle_hidden", "Hidden files")]
 
@@ -119,7 +122,7 @@ class IsoPickerScreen(Dialog):
         self.start = start
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        with VerticalScroll(id="box"):
             yield Static("Choose an .iso or .img file (. shows hidden files, Escape cancels)",
                          classes="title", markup=False)
             yield IsoTree(self.start)

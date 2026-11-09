@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from textual.app import App
+from textual.containers import VerticalScroll
 
 from vmmanager.ui.dialogs import IsoPickerScreen, IsoTree
 
@@ -50,3 +51,18 @@ class IsoPickerTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             style = app.screen.query_one(IsoTree).get_component_rich_style("directory-tree--extension")
             self.assertFalse(style.italic)
+
+    async def test_only_the_tree_scrolls_at_any_size(self):
+        for i in range(60):
+            (self.root / f"f{i:02}.iso").write_text("")
+        for size in [(80, 24), (100, 30), (160, 60)]:
+            app = App()
+            async with app.run_test(size=size) as pilot:
+                app.push_screen(IsoPickerScreen(self.root))
+                await pilot.pause()
+                await pilot.pause()
+                box = app.screen.query_one(VerticalScroll)
+                tree = app.screen.query_one(IsoTree)
+                self.assertEqual(box.max_scroll_y, 0, size)
+                self.assertGreater(tree.size.height, 5, size)
+                self.assertGreater(tree.max_scroll_y, 0, size)
