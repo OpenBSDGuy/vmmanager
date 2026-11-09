@@ -17,13 +17,13 @@ A terminal UI for OpenBSD's vmm/vmd virtual machines. Think VirtualBox, but in a
 
 ```
 $ pkg_add py3-pipx
-$ pipx install vmmanager
+$ pipx install openbsd-vmmanager
 ```
 
 Or with pip:
 
 ```
-$ pip install vmmanager
+$ pip install openbsd-vmmanager
 ```
 
 Then run:
