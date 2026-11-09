@@ -2,6 +2,7 @@ import difflib
 import unittest
 from pathlib import Path
 
+from vmmanager.errors import VmmError
 from vmmanager.confblock import (
     comment_out,
     edit_block,
@@ -93,10 +94,55 @@ class EditTests(unittest.TestCase):
         self.assertIn("  memory 8G\n  cpus 2\n  disable\n", new)
 
     def test_edit_block_refuses_one_liner(self):
-        from vmmanager.errors import VmmError
-
         with self.assertRaises(VmmError):
             edit_block("vm plain { memory 1G }\n", {"memory": "2G"})
+
+
+class FixRoundTests(unittest.TestCase):
+    def test_edit_refuses_multiline_nested_statement(self):
+        b = 'vm "a" {\n  memory 1G\n  local interface {\n    group "g"\n  }\n  owner u\n}\n'
+        with self.assertRaises(VmmError) as cm:
+            edit_block(b, {"internet": False})
+        self.assertIn("a", cm.exception.message)
+        with self.assertRaises(VmmError):
+            ensure_owner(b, "u")
+
+    def test_memory_and_cpus_validated(self):
+        b = block(BOX, "debian")
+        for bad in ("1G\n  disk /etc/master.passwd", "G", "1 G", ""):
+            with self.assertRaises(VmmError):
+                edit_block(b, {"memory": bad})
+        for bad in (0, 65, True, "2"):
+            with self.assertRaises(VmmError):
+                edit_block(b, {"cpus": bad})
+        kw = dict(disk=Path("/d"), cdrom=None, internet=True, owner="u")
+        with self.assertRaises(VmmError):
+            render_block("a", memory="1G\n  x", cpus=1, **kw)
+        for bad in (0, 65, True):
+            with self.assertRaises(VmmError):
+                render_block("a", memory="1G", cpus=bad, **kw)
+        self.assertIn("memory 1.5G", edit_block(b, {"memory": "1.5G"}))
+
+    def test_find_block_refuses_shared_lines(self):
+        t = 'vm "a" { memory 1G } vm "b" { memory 1G }\n'
+        with self.assertRaises(VmmError):
+            find_block(t, "a")
+        with self.assertRaises(VmmError):
+            find_block(t, "b")
+        self.assertIsNotNone(find_block('vm "a" { memory 1G } # c\n', "a"))
+
+    def test_duplicate_key_first_wins(self):
+        b = 'vm "a" {\n  memory 1G\n  memory 2G\n}\n'
+        self.assertEqual(facts(b).memory, "1G")
+        self.assertEqual(edit_block(b, {"memory": "4G"}), 'vm "a" {\n  memory 4G\n  memory 2G\n}\n')
+
+    def test_cdrom_remove_replace_insert(self):
+        b = 'vm "a" {\n  disk "/d1"\n  cdrom "/x.iso"\n  disk "/d2"\n  owner u\n}\n'
+        self.assertNotIn("cdrom", edit_block(b, {"cdrom": None}))
+        self.assertIn('  cdrom "/y z.iso"\n', edit_block(b, {"cdrom": "/y z.iso"}))
+        self.assertNotIn("/x.iso", edit_block(b, {"cdrom": "/y.iso"}))
+        n = 'vm "a" {\n  disk "/d1"\n  disk "/d2"\n  owner u\n}\n'
+        self.assertIn('  disk "/d2"\n  cdrom "/i.iso"\n  owner u\n', edit_block(n, {"cdrom": "/i.iso"}))
 
 
 class OtherTests(unittest.TestCase):

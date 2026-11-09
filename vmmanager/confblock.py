@@ -8,6 +8,7 @@ from vmmanager.layout import quote
 # strings, comments, braces, and bare words
 _TOKEN = re.compile(r'"[^"]*"|#[^\n]*|[{}]|[^\s{}"#]+')
 _WORD = re.compile(r'"[^"]*"|#.*|\S+')
+_MEMORY = re.compile(r"\d+(\.\d+)?[KMGTkmgt]?")
 _DISK = re.compile(r'^(\s*disk\s+)("[^"]*"|\S+)(.*)$', re.S)
 
 
@@ -49,6 +50,8 @@ def find_block(text: str, name: str) -> tuple[int, int] | None:
                 open_i = i + 4
             else:
                 continue
+            if text[text.rfind("\n", 0, t.start()) + 1 : t.start()].strip():
+                raise VmmError(f"Cannot edit vm {name}: another statement shares its first line")
             d = 0
             for j in range(open_i, len(toks)):
                 if toks[j].group() == "{":
@@ -58,6 +61,8 @@ def find_block(text: str, name: str) -> tuple[int, int] | None:
                     if d == 0:
                         start = text.rfind("\n", 0, t.start()) + 1
                         end = text.find("\n", toks[j].end())
+                        if _words(text[toks[j].end() : len(text) if end < 0 else end]):
+                            raise VmmError(f"Cannot edit vm {name}: another statement shares its last line")
                         return start, len(text) if end < 0 else end + 1
             return None
     return None
@@ -84,7 +89,7 @@ def facts(block: str) -> BlockFacts:
         elif w[0] == "interface":
             other = True
         elif w[0] in ("memory", "cpus", "cdrom", "owner") and len(w) > 1:
-            vals[w[0]] = _unq(w[1])
+            vals.setdefault(w[0], _unq(w[1]))
     head = _words(block[: block.index("{")])
     return BlockFacts(
         memory=vals.get("memory"),
@@ -99,9 +104,17 @@ def facts(block: str) -> BlockFacts:
     )
 
 
+def _check(memory: object, cpus: object) -> None:
+    if memory is not None and not (isinstance(memory, str) and _MEMORY.fullmatch(memory)):
+        raise VmmError(f"Invalid memory {memory!r}: use a size like 512M or 2G")
+    if cpus is not None and not (type(cpus) is int and 1 <= cpus <= 64):
+        raise VmmError(f"Invalid cpus {cpus!r}: use a whole number from 1 to 64")
+
+
 def render_block(
     name: str, *, memory: str, cpus: int, disk: Path, cdrom: str | None, internet: bool, owner: str
 ) -> str:
+    _check(memory, cpus)
     lines = [f"vm {quote(name)} {{", f"  memory {memory}", f"  cpus {cpus}", "  disable"]
     lines.append(f"  disk {quote(str(disk))}")
     if cdrom is not None:
@@ -116,8 +129,17 @@ def _split(block: str) -> list[str]:
     """Lines of a multi-line block; refuses one-liners it cannot edit by line."""
     lines = block.splitlines(keepends=True)
     head = _words(lines[0].split("{", 1)[1]) if "{" in lines[0] else ["?"]
+    name = _words(lines[0].split("{", 1)[0])[-1].strip('"')
     if head or len(lines) < 2 or lines[-1].strip() != "}":
-        raise VmmError("Cannot edit this vm.conf block line by line", detail=block)
+        raise VmmError(f"Cannot edit vm {name}: its block is not one statement per line", detail=block)
+    for line in lines[1:-1]:
+        depth = 0
+        for m in _TOKEN.finditer(line):
+            depth += {"{": 1, "}": -1}.get(m.group(), 0)
+            if depth < 0:
+                break
+        if depth != 0:
+            raise VmmError(f"Cannot edit vm {name}: it has a statement spanning several lines", detail=block)
     return lines
 
 
@@ -157,6 +179,7 @@ def _set(lines: list[str], key: str, value: str | None, after: tuple[str, ...]) 
 
 def edit_block(block: str, changes: dict[str, object]) -> str:
     lines = _split(block)
+    _check(changes.get("memory"), changes.get("cpus"))
     for key, value in changes.items():
         if key == "memory":
             _set(lines, "memory", str(value), ())
