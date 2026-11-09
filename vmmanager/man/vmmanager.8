@@ -95,7 +95,7 @@ Migrate a VM that was not created by
 .Nm
 (see
 .Sx MIGRATING ) .
-.It Ic ?
+.It Ic \&?
 Show this manual page.
 .It Ic q
 Quit.
@@ -139,13 +139,20 @@ Regenerated: one include line per managed VM.
 The
 .Ic vm
 block of one managed VM.
-It always has
+Blocks created by
+.Nm
+always have
 .Ic owner <user>
 and
 .Ic disable ,
 so
 .Xr vmd 8
-never starts it by itself.
+never starts them by itself.
+Migrated blocks get
+.Ic owner
+added if missing and otherwise keep their original lines, including their own
+.Ic disable
+or lack of it.
 .It Pa /etc/vmmanager/pf.conf
 The NAT rules, loaded as a
 .Xr pf.conf 5
@@ -156,7 +163,7 @@ Gets a marked 3-line block, see
 .It Pa /etc/sysctl.conf
 Gets the line
 .Li net.inet.ip.forwarding=1
-when IP forwarding was off.
+whenever it is missing from the file, whatever the running value is.
 .It Pa /usr/local/man/man8/vmmanager.8 , /usr/local/man/man5/vmmanager.toml.5
 The installed pages.
 .El
@@ -205,9 +212,10 @@ If the check fails, every changed file is restored exactly as it was and the
 error text is shown.
 If
 .Xr vmd 8
-cannot reload after a create, migrate or remove, the change is kept and you
-are told to run
+cannot reload after a create, a migrate or the removal of a broken VM from the
+health check, the change is kept and you are told to run
 .Ic doas vmctl reload .
+Update and delete show the reload error as it is.
 .Pp
 If
 .Ic vmd \-n
@@ -215,7 +223,8 @@ already fails before
 .Nm
 changes anything,
 .Nm
-refuses every write action and shows the error.
+refuses create, update, delete and migrate and shows the error.
+Removing a broken VM from the health check and the network setup still work.
 Hand-written configuration is never repaired.
 .Sh NETWORKING
 A VM has one network setting, Internet on or off.
@@ -266,20 +275,23 @@ A missing
 is never created; the setup is refused.
 If loading the rules fails, both files are restored.
 .Pp
-The check at start-up needs no root.
+The check at start-up needs no root and runs only if you own a managed VM
+with Internet.
 It only tests that
 .Pa /etc/vmmanager/pf.conf
 exists, that IP forwarding is on, and that unwind or unbound is running.
-If the pf rules were flushed by hand,
+If the pf rules were flushed by hand, NAT stays off until
+.Ic doas pfctl \-f /etc/pf.conf
+or a reboot, and
 .Nm
-does not notice until the next boot or until you run
-.Ic doas pfctl \-f /etc/pf.conf .
+does not detect it.
 .Pp
-The anchor is at the end of
-.Pa /etc/pf.conf ,
-so with last-match and
+The anchor is loaded at the end of the main ruleset, so its rules win over
+earlier rules that are not
+.Ic quick ;
+earlier
 .Ic quick
-its rules take effect over earlier ones.
+rules still take precedence.
 Hand-written NAT or
 .Ic rdr-to
 lines are left alone.
@@ -365,8 +377,15 @@ a disk is missing, is a qcow2 with a backing file, is on another filesystem
 than your home, is in a folder you cannot write to, or two disks have the same
 file name;
 .It
-a disk is not a regular file owned by you or root (see
-.Sx SECURITY ) ;
+a disk or the ISO is not a regular file owned by you or root (see
+.Sx SECURITY ) ,
+or the ISO is missing;
+.It
+its
+.Xr vm.conf 5
+block has a layout
+.Nm
+cannot edit;
 .It
 the folder
 .Pa ~/vmmanager/<name>
@@ -413,7 +432,7 @@ A symbolic link swapped in for a disk, pointing at a device such as
 would give the guest the host's disk.
 Before it starts a VM,
 .Nm
-therefore checks every disk and ISO path in the VM's block: each must be a
+therefore checks every disk and ISO path in the VM's block: each, including the ISO, must be a
 regular file, not a symbolic link or device, owned by the VM's owner or root.
 Otherwise the VM is not started and the files are listed.
 .Pp
@@ -464,6 +483,11 @@ If a VM folder was deleted by hand, the check names the broken VM and, for
 its owner, offers to remove its configuration.
 .El
 .Sh UNINSTALL
+Do the steps in this order, so that
+.Xr pf.conf 5
+and
+.Xr vm.conf 5
+never point at files that are gone.
 .Bl -enum
 .It
 Remove the program:
@@ -476,40 +500,64 @@ Remove the man pages:
 doas rm /usr/local/man/man8/vmmanager.8 /usr/local/man/man5/vmmanager.toml.5 && doas makewhatis /usr/local/man
 .Ed
 .It
-If your VMs should stop being managed, remove the line
+Remove the three marked lines (the
+.Li # added by vmmanager
+comment, the
+.Ic anchor
+line and the
+.Ic load anchor
+line) from
+.Pa /etc/pf.conf
+and the
+.Li net.inet.ip.forwarding=1
+line from
+.Pa /etc/sysctl.conf
+if you do not want it, then run
+.Ic doas pfctl \-f /etc/pf.conf .
+See
+.Sx NETWORKING
+for the resolver.
+.It
+Remove the line
 .Li include "/etc/vmmanager/vmmanager.conf"
 and its
 .Li # added by vmmanager
 comment from
 .Pa /etc/vm.conf ,
-then
-.Ic doas rm \-r /etc/vmmanager
+run
+.Ic doas vmd \-n
 and
 .Ic doas vmctl reload .
-VMs migrated earlier were commented out in
-.Pa /etc/vm.conf
-with the marker
-.Li # moved to vmmanager ;
-remove the marker to restore a block, and move its disks back if you wish.
-Remove the three marked lines from
-.Pa /etc/pf.conf
-as described in
-.Sx NETWORKING
-before deleting
-.Pa /etc/vmmanager ,
-or
-.Xr pf.conf 5
-will fail to load.
+.It
+Only now delete the configuration:
+.Ic doas rm \-r /etc/vmmanager .
 .It
 Your VMs' disks stay in
 .Pa ~/vmmanager ,
 which you may keep or delete.
 .El
+.Pp
+To give a migrated VM back to a hand-written
+.Pa /etc/vm.conf ,
+note that its commented-out block, marked
+.Li # moved to vmmanager ,
+still holds the old disk paths.
+Move the disks back first (or edit the paths in the block), remove the VM's
+file under
+.Pa /etc/vmmanager/<user>
+and its include line from
+.Pa /etc/vmmanager/vmmanager.conf ,
+uncomment the block in
+.Pa /etc/vm.conf ,
+then run
+.Ic doas vmd \-n
+and
+.Ic doas vmctl reload .
 .Sh SEE ALSO
-.Xr vmctl 8 ,
-.Xr vmd 8 ,
+.Xr doas.conf 5 ,
+.Xr pf.conf 5 ,
 .Xr vm.conf 5 ,
 .Xr vmmanager.toml 5 ,
-.Xr pf.conf 5 ,
-.Xr doas.conf 5 ,
-.Xr unwind 8
+.Xr unwind 8 ,
+.Xr vmctl 8 ,
+.Xr vmd 8

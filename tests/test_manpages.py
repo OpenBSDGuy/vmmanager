@@ -55,6 +55,20 @@ class ManpagesTests(unittest.TestCase):
         self.assertIn("Dt VMMANAGER 8", (man / "man8/vmmanager.8").read_text())
         self.assertEqual(sys.calls[-1], (["makewhatis", str(man)], True))
 
+    def test_install_dir_only_when_section_missing(self):
+        man = self.root / "man"
+        (man / "man8").mkdir(parents=True)
+        sys = FakeSystem(self.root)
+        with mock.patch.object(manpages, "MAN_DIR", man), \
+                mock.patch.object(sys, "install_dir", wraps=sys.install_dir) as install_dir:
+            manpages.install(sys)
+        install_dir.assert_called_once_with(man / "man5")
+
+    def test_record_creates_user_dir(self):
+        layout = Layout(etc=self.root / "etc", home=self.root / "fresh", user="u")
+        manpages.record(layout, True)
+        self.assertEqual(tomlio.load(layout.state_file), {"man_installed_version": __version__})
+
 
 if __name__ == "__main__":
     unittest.main()

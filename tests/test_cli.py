@@ -1,11 +1,14 @@
 import contextlib
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from vmmanager import __version__
 from vmmanager.cli import main
 from vmmanager.errors import VmmError
+from vmmanager.layout import Layout
 
 
 class CliTests(unittest.TestCase):
@@ -44,6 +47,25 @@ class CliTests(unittest.TestCase):
             self.assertEqual(main(["--install-man"]), 1)
         self.assertIn("boom", err.getvalue())
         self.assertIn("why", err.getvalue())
+
+    def test_man_flag_reports_error(self):
+        err = io.StringIO()
+        with mock.patch("vmmanager.manpages.view", side_effect=VmmError("no man", "detail")), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(main(["--man"]), 1)
+        self.assertIn("no man", err.getvalue())
+        self.assertIn("detail", err.getvalue())
+
+    def test_install_man_success_without_user_dir(self):
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as home, \
+                mock.patch("platform.system", return_value="OpenBSD"), \
+                mock.patch("vmmanager.cli.Layout", return_value=Layout(home=Path(home), user="u")), \
+                mock.patch("vmmanager.manpages.install"), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(main(["--install-man"]), 0)
+            self.assertTrue((Path(home) / "vmmanager/state.toml").exists())
+        self.assertIn("Installed man pages", out.getvalue())
 
 
 if __name__ == "__main__":

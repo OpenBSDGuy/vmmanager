@@ -36,7 +36,9 @@ Creation time, UTC, as
 .It Ic version
 The
 .Xr vmmanager 8
-version that created the VM.
+version that created or migrated the VM.
+.It Ic migrated_from
+Written by migration: the old disk paths, separated by commas.
 .El
 .Sh STATE KEYS
 .Bl -tag -width Ds
@@ -52,5 +54,5 @@ The question is not asked again.
 still works.
 .El
 .Sh SEE ALSO
-.Xr vmmanager 8 ,
-.Xr vm.conf 5
+.Xr vm.conf 5 ,
+.Xr vmmanager 8

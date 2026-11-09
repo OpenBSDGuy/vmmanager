@@ -8,6 +8,13 @@ from vmmanager.layout import Layout
 from vmmanager.system import System
 
 
+def _fail(e: VmmError) -> int:
+    print(e.message, file=sys.stderr)
+    if e.detail:
+        print(e.detail, file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vmmanager")
     parser.add_argument("--version", action="store_true")
@@ -18,7 +25,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"vmmanager {__version__}")
         return 0
     if args.man:
-        return manpages.view(System())
+        try:
+            return manpages.view(System())
+        except VmmError as e:
+            return _fail(e)
     if platform.system() != "OpenBSD":
         print("vmmanager only runs on OpenBSD", file=sys.stderr)
         return 1
@@ -27,10 +37,7 @@ def main(argv: list[str] | None = None) -> int:
             manpages.install(System())
             manpages.record(Layout(), True)
         except VmmError as e:
-            print(e.message, file=sys.stderr)
-            if e.detail:
-                print(e.detail, file=sys.stderr)
-            return 1
+            return _fail(e)
         print(f"Installed man pages in {manpages.MAN_DIR}")
         return 0
     return 0  # Task 13

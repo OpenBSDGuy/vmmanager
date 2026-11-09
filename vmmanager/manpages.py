@@ -37,4 +37,5 @@ def should_offer(layout: Layout, doas_state: str) -> bool:
 def record(layout: Layout, installed: bool) -> None:
     state = tomlio.load(layout.state_file)
     state["man_installed_version" if installed else "man_declined"] = __version__ if installed else True
+    layout.user_dir.mkdir(parents=True, exist_ok=True)
     tomlio.save(layout.state_file, state)
