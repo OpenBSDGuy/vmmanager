@@ -89,6 +89,14 @@ class MessageScreen(Dialog):
 
 
 class IsoTree(DirectoryTree):
+    # Fixed height so the tree scrolls itself (fits a 24-line console); no extension
+    # styling: Textual's matches from the first dot and italic shows as a highlight.
+    DEFAULT_CSS = """
+    IsoTree { height: 16; }
+    IsoTree > .directory-tree--extension, IsoTree:ansi > .directory-tree--extension {
+        text-style: none;
+    }
+    """
     show_hidden = False
 
     def filter_paths(self, paths):
@@ -100,7 +108,11 @@ class IsoTree(DirectoryTree):
 class IsoPickerScreen(Dialog):
     """Browse for an install image; dismisses with its path or None."""
 
+    AUTO_FOCUS = "IsoTree"
     BINDINGS = [("full_stop", "toggle_hidden", "Hidden files")]
+
+    def _focus_box_if_it_scrolls(self) -> None:
+        pass  # the tree scrolls itself; the box stays out of the tab order
 
     def __init__(self, start: Path):
         super().__init__()
