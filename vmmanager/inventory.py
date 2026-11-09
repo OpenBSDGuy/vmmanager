@@ -55,9 +55,17 @@ class VmEntry:
         return "not managed by vmmanager — press m to migrate"
 
 
-def _block_facts(text: str, name: str) -> BlockFacts | None:
-    span = confblock.find_block(text, name)
-    return confblock.facts(text[span[0]:span[1]]) if span else None
+def _block_facts(text: str, name: str) -> tuple[BlockFacts | None, bool]:
+    """Facts for the block, and whether the block could not be read."""
+    try:
+        span = confblock.find_block(text, name)
+    except VmmError:
+        return None, True
+    return (confblock.facts(text[span[0]:span[1]]) if span else None), False
+
+
+def _owner_user(owner: str) -> str:
+    return owner.strip('"').split(":")[0]
 
 
 def load_inventory(sys: System, layout: Layout) -> list[VmEntry]:
@@ -66,20 +74,15 @@ def load_inventory(sys: System, layout: Layout) -> list[VmEntry]:
     entries = {}
     for path in layout.etc_dir.glob("*/*.conf"):
         owner, name = path.parent.name, path.stem
-        facts = _block_facts(sys.read_file(path) or "", name)
+        facts, _ = _block_facts(sys.read_file(path) or "", name)
         entries[name] = VmEntry(name, statuses.get(name), owner, True,
                                 owner == layout.user, facts, path)
     for name, st in statuses.items():
         if name in entries:
             continue
-        unreadable = False
-        try:
-            facts = _block_facts(vm_conf, name)
-        except VmmError:
-            facts, unreadable = None, True
-        if facts:
-            mine = facts.owner is None or facts.owner.split(":")[0] == layout.user
-        else:
-            mine = st.owner_user == layout.user
-        entries[name] = VmEntry(name, st, st.owner_user, False, mine, facts, None, unreadable)
+        facts, unreadable = _block_facts(vm_conf, name)
+        # a block without an owner line shows as root in vmctl, but its user may migrate it
+        owner = _owner_user(facts.owner) if facts and facts.owner else st.owner_user
+        mine = owner == layout.user or bool(facts and facts.owner is None)
+        entries[name] = VmEntry(name, st, owner, False, mine, facts, None, unreadable)
     return sorted(entries.values(), key=lambda e: e.name)

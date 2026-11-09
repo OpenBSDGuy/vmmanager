@@ -80,6 +80,34 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(e.actions, frozenset())
         self.assertIn("can't read its vm.conf block", e.reason)
 
+    def test_managed_conf_with_unreadable_block_still_lists(self):
+        self.status("")
+        self.managed("kixz", "bad", 'vm "bad" {\n  disable\n} vm "x" {\n}\n')
+        e = load_inventory(self.sys, self.layout)[0]
+        self.assertIsNone(e.facts)
+        self.assertEqual(e.actions, {"start", "run", "update", "delete"})
+
+    def test_managed_paused_actions(self):
+        self.status(RUNNING.replace("running", "paused"))
+        self.managed("kixz", "web")
+        self.assertEqual(load_inventory(self.sys, self.layout)[0].actions, {"stop"})
+
+    def unmanaged_with_owner(self, owner_line):
+        self.status(RUNNING)
+        self.vm_conf('vm "web" {\n  disable\n  %s\n}\n' % owner_line)
+        return load_inventory(self.sys, self.layout)[0]
+
+    def test_unmanaged_block_owned_by_other_user(self):
+        e = self.unmanaged_with_owner("owner bob:bob")
+        self.assertEqual(e.actions, frozenset())
+        self.assertEqual(e.reason, "owned by bob")
+
+    def test_unmanaged_owner_with_other_group_is_mine(self):
+        self.assertEqual(self.unmanaged_with_owner("owner kixz:wheel").actions, {"migrate"})
+
+    def test_unmanaged_quoted_owner(self):
+        self.assertEqual(self.unmanaged_with_owner('owner "kixz:kixz"').actions, {"migrate"})
+
 
 if __name__ == "__main__":
     unittest.main()
