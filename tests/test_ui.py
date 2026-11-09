@@ -67,7 +67,8 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
         self.fail("condition never became true")
 
     async def screen(self, pilot, kind):
-        await self.until(pilot, lambda: isinstance(pilot.app.screen, kind))
+        # is_mounted: the screen's widgets are composed too (3.11 schedules this later than 3.14)
+        await self.until(pilot, lambda: isinstance(pilot.app.screen, kind) and pilot.app.screen.is_mounted)
         return pilot.app.screen
 
     async def started(self, pilot):
