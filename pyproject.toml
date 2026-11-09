@@ -21,9 +21,9 @@ classifiers = [
 dynamic = ["dependencies"]
 
 [project.urls]
-Homepage = "https://github.com/kasramp/vmmanager"
-Repository = "https://github.com/kasramp/vmmanager"
-Issues = "https://github.com/kasramp/vmmanager/issues"
+Homepage = "https://github.com/OpenBSDGuy/vmmanager"
+Repository = "https://github.com/OpenBSDGuy/vmmanager"
+Issues = "https://github.com/OpenBSDGuy/vmmanager/issues"
 
 [project.scripts]
 vmmanager = "vmmanager.cli:main"
