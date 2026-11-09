@@ -157,7 +157,9 @@ class VmmApp(App):
             self.notify("No VM selected", severity="warning")
             return None
         if action not in e.actions:
-            self.notify(e.reason or f"{e.name} is {e.state}", severity="warning", markup=False)
+            why = (f"{e.name} is already managed by vmmanager" if action == "migrate" and e.managed
+                   else e.reason or f"{e.name} is {e.state}")
+            self.notify(why, severity="warning", markup=False)
             return None
         if action in ROOT_ACTIONS and not self._can_root():
             return None

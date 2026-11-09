@@ -148,6 +148,19 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(notify.call_args.args[0], "not managed by vmmanager — press m to migrate")
         start.assert_not_called()
 
+    async def test_migrate_on_managed_vm_says_already_managed(self):
+        self.status("")
+        self.managed()
+        migrate = self.patch("vmmanager.migrate.migrate_vm")
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            with mock.patch.object(app, "notify") as notify:
+                await pilot.press("m")
+                await pilot.pause()
+            self.assertEqual(notify.call_args.args[0], "web is already managed by vmmanager")
+        migrate.assert_not_called()
+
     async def test_root_actions_need_doas(self):
         self.health = Health(True, True, True, "denied", None, [], None)
         app = VmmApp(self.sys, self.layout)
