@@ -21,7 +21,7 @@ set -e
 #   1. Go to https://pypi.org and create an account
 #   2. Account Settings → API tokens → Add API token
 #   3. Scope: "Entire account" for the first upload
-#      (after that, scope it to "vmmanager" only)
+#      (after that, scope it to "openbsd-vmmanager" only)
 #   4. Copy the token — it starts with "pypi-"
 #   5. Paste it when prompted below (or set TWINE_PASSWORD beforehand)
 # ─────────────────────────────────────────────
@@ -118,5 +118,5 @@ export TWINE_USERNAME="${TWINE_USERNAME:-__token__}"
 
 echo ""
 echo "==> Done! Install with:"
-echo "    pipx install vmmanager"
+echo "    pipx install openbsd-vmmanager"
 echo "    vmmanager"
