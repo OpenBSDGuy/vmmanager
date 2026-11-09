@@ -1,4 +1,6 @@
 import contextlib
+import os
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -59,6 +61,41 @@ class SystemTests(unittest.TestCase):
                 self.assertEqual(Scripted(result).doas_state(), want)
         with mock.patch("shutil.which", return_value=None):
             self.assertEqual(Scripted().doas_state(), "missing")
+
+    def test_no_retry_when_rc_zero_with_auth_text(self):
+        s = Scripted(Result(0, "", "Authentication required"))
+        s.run(["x"], root=True)
+        self.assertEqual(len(s.argvs), 1)
+
+    def test_missing_binary_raises_vmm_error(self):
+        with self.assertRaises(VmmError) as cm:
+            System().run(["vmmanager-no-such-binary"])
+        self.assertIn("command not found", cm.exception.message)
+
+    def test_install_file_preserves_bytes_and_removes_temp(self):
+        seen = {}
+
+        class Copy(System):
+            def _spawn(self, argv, capture):
+                tmp = argv[-2]
+                seen["tmp"] = tmp
+                with open(tmp, "rb") as f:
+                    seen["data"] = f.read()
+                return Result(0, "", "")
+
+        Copy().install_file("a\r\nb\udcff\n", Path("/x"), 0o644)
+        self.assertEqual(seen["data"], b"a\r\nb\xff\n")
+        self.assertFalse(os.path.exists(seen["tmp"]))
+
+    def test_install_file_removes_temp_when_write_fails(self):
+        with mock.patch("tempfile.NamedTemporaryFile") as m:
+            fh = m.return_value
+            fh.__enter__.return_value = fh
+            fh.write.side_effect = OSError("disk full")
+            fh.name = "/nonexistent-tmp"
+            with mock.patch("os.unlink") as unlink, self.assertRaises(OSError):
+                System().install_file("x", Path("/x"), 0o644)
+            unlink.assert_called_once_with("/nonexistent-tmp")
 
 
 if __name__ == "__main__":

@@ -26,15 +26,20 @@ class System:
         self.suspend: Callable[[], ContextManager] = contextlib.nullcontext
 
     def _spawn(self, argv: list[str], capture: bool) -> Result:
-        p = subprocess.run(argv, capture_output=capture, text=True)
-        return Result(p.returncode, p.stdout or "", p.stderr or "")
+        try:
+            p = subprocess.run(argv, capture_output=capture)
+        except OSError as e:
+            raise VmmError(f"{argv[0]}: command not found", detail=str(e)) from e
+        # surrogateescape keeps non-UTF-8 bytes intact for byte-exact restore
+        dec = lambda b: (b or b"").decode("utf-8", "surrogateescape")
+        return Result(p.returncode, dec(p.stdout), dec(p.stderr))
 
     def run(self, argv: list[str], *, root: bool = False, check: bool = True) -> Result:
         if not root:
             r = self._spawn(argv, True)
         else:
             r = self._spawn(["doas", "-n", *argv], True)
-            if AUTH_REQUIRED in r.err:
+            if r.rc != 0 and AUTH_REQUIRED in r.err:
                 # doas prompts on /dev/tty, so capturing output does not hide it
                 with self.suspend():
                     r = self._spawn(["doas", *argv], True)
@@ -48,16 +53,20 @@ class System:
 
     def read_file(self, path: Path) -> str | None:
         try:
-            return path.read_text()
+            with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+                return f.read()
         except FileNotFoundError:
             return None
         except PermissionError:
             return self.run(["cat", str(path)], root=True).out
 
     def install_file(self, content: str, dest: Path, mode: int) -> None:
-        with tempfile.NamedTemporaryFile(delete=False, mode="w") as tmp:
-            tmp.write(content)
+        tmp = tempfile.NamedTemporaryFile(
+            delete=False, mode="w", encoding="utf-8", errors="surrogateescape", newline=""
+        )
         try:
+            with tmp:
+                tmp.write(content)
             self.run(["install", "-o", "root", "-g", "wheel", "-m", f"{mode:04o}", tmp.name, str(dest)], root=True)
         finally:
             os.unlink(tmp.name)

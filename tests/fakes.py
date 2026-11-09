@@ -33,22 +33,28 @@ class FakeSystem(System):
         for prefix, resp in self.responses.items():
             if tuple(argv[: len(prefix)]) == prefix and len(prefix) >= len(best):
                 best, r = prefix, resp
+        if root and self.auth_mode == "password":
+            with self.suspend():  # simulates the interactive doas retry
+                pass
         if check and r.rc != 0:
             raise VmmError(f"{argv[0]} failed", detail=r.err)
         return r
 
     def interactive(self, argv, *, root=False):
         self.calls.append((list(argv), root))
-        return self.interactive_rc
+        with self.suspend():
+            return self.interactive_rc
 
     def read_file(self, path):
         try:
-            return path.read_text()
+            with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+                return f.read()
         except FileNotFoundError:
             return None
 
     def install_file(self, content, dest, mode):
-        dest.write_text(content)
+        with open(dest, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+            f.write(content)
         os.chmod(dest, mode)
         self.modes[dest] = mode
 
