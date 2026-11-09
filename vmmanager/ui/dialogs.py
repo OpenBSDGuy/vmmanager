@@ -89,12 +89,18 @@ class MessageScreen(Dialog):
 
 
 class IsoTree(DirectoryTree):
+    show_hidden = False
+
     def filter_paths(self, paths):
-        return [p for p in paths if p.is_dir() or p.suffix.lower() in (".iso", ".img")]
+        return [p for p in paths
+                if (self.show_hidden or not p.name.startswith("."))
+                and (p.is_dir() or p.suffix.lower() in (".iso", ".img"))]
 
 
 class IsoPickerScreen(Dialog):
     """Browse for an install image; dismisses with its path or None."""
+
+    BINDINGS = [("full_stop", "toggle_hidden", "Hidden files")]
 
     def __init__(self, start: Path):
         super().__init__()
@@ -102,8 +108,14 @@ class IsoPickerScreen(Dialog):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
-            yield Static("Choose an .iso or .img file (Escape to cancel)", classes="title")
+            yield Static("Choose an .iso or .img file (. shows hidden files, Escape cancels)",
+                         classes="title", markup=False)
             yield IsoTree(self.start)
+
+    def action_toggle_hidden(self) -> None:
+        tree = self.query_one(IsoTree)
+        tree.show_hidden = not tree.show_hidden
+        tree.reload()
 
     @on(DirectoryTree.FileSelected)
     def picked(self, event: DirectoryTree.FileSelected) -> None:
