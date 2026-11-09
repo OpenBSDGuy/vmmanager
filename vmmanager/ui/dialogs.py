@@ -27,6 +27,16 @@ class Dialog(ModalScreen):
     def action_close(self) -> None:
         self.dismiss(None)
 
+    def on_mount(self) -> None:
+        # Textual makes scroll boxes tab stops; only keep that when the text overflows.
+        for box in self.query(VerticalScroll):
+            box.can_focus = False
+        self.call_after_refresh(self._focus_box_if_it_scrolls)
+
+    def _focus_box_if_it_scrolls(self) -> None:
+        for box in self.query(VerticalScroll):
+            box.can_focus = box.max_scroll_y > 0
+
 
 class ConfirmScreen(Dialog):
     """A yes/no question; dismisses with True or False."""
