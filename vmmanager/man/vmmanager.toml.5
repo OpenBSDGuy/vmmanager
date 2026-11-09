@@ -1,0 +1,56 @@
+.Dd November 9, 2026
+.Dt VMMANAGER.TOML 5
+.Os
+.Sh NAME
+.Nm vmmanager.toml
+.Nd per-VM extras and state files of vmmanager
+.Sh DESCRIPTION
+.Xr vmmanager 8
+keeps what
+.Xr vm.conf 5
+cannot hold in two small TOML files, one string or boolean per line.
+Nothing in them is read by
+.Xr vmd 8 .
+They are written by
+.Xr vmmanager 8 ;
+editing by hand is safe but not needed.
+.Sh FILES
+.Bl -tag -width Ds
+.It Pa ~/vmmanager/<name>/vmmanager.toml
+The extras of one VM.
+.It Pa ~/vmmanager/state.toml
+The state of the tool for one user.
+.El
+.Sh EXTRAS KEYS
+.Bl -tag -width Ds
+.It Ic iso
+Path of the install ISO, or an empty string when none is attached.
+Cleared when the ISO is detached in update.
+.It Ic os
+Free-text OS label.
+.It Ic notes
+Free-text notes.
+.It Ic created
+Creation time, UTC, as
+.Li YYYY-MM-DDTHH:MM:SSZ .
+.It Ic version
+The
+.Xr vmmanager 8
+version that created the VM.
+.El
+.Sh STATE KEYS
+.Bl -tag -width Ds
+.It Ic man_installed_version
+The version of the man pages last installed system-wide.
+The installation is offered again when it differs from the running version.
+.It Ic man_declined
+Set to
+.Li true
+when you answered no to installing the man pages.
+The question is not asked again.
+.Ic vmmanager \-\-install\-man
+still works.
+.El
+.Sh SEE ALSO
+.Xr vmmanager 8 ,
+.Xr vm.conf 5
