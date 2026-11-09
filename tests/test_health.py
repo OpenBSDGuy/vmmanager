@@ -93,6 +93,50 @@ class HealthTests(unittest.TestCase):
         with self.assertRaises(VmmError):
             health.remove_broken(self.sys, self.layout, "../x")
 
+    def _two_broken(self):
+        a, b = self.layout.system_conf("a"), self.layout.system_conf("b")
+        a.write_text("vm a {}\n")
+        b.write_text("vm b {}\n")
+        self.layout.aggregate.write_text(f'include "{a}"\ninclude "{b}"\n')
+        err = "".join(f"vmd: {c}:1: bad\n" for c in (a, b))
+
+        def vmd_n(argv, *, root=False, check=True):
+            # fail while b's conf exists; mimics vmd -n naming remaining broken confs
+            self.sys.calls.append((list(argv), root))
+            left = "".join(f"vmd: {c}:1: bad\n" for c in (a, b) if c.exists())
+            return Result(1 if left else 0, "", left) if argv[0] == "vmd" else Result(0, "", "")
+
+        self.sys.run = vmd_n
+        return a, b, err
+
+    def test_remove_one_of_two_broken_commits_without_reload(self):
+        a, b, _ = self._two_broken()
+        health.remove_broken(self.sys, self.layout, "a")
+        self.assertFalse(a.exists())
+        self.assertTrue(b.exists())
+        self.assertNotIn(str(a), self.layout.aggregate.read_text())
+        self.assertNotIn((["vmctl", "reload"], True), self.sys.calls)
+
+    def test_remove_broken_rolls_back_when_it_stays_broken(self):
+        a, b, err = self._two_broken()
+        self.sys.run = lambda argv, *, root=False, check=True: Result(1, "", err) if argv[0] == "vmd" else Result(0, "", "")
+        with self.assertRaises(VmmError):
+            health.remove_broken(self.sys, self.layout, "b")
+        self.assertTrue(b.exists())
+
+    def test_remove_broken_reload_failure_is_reported(self):
+        conf = self.layout.system_conf("deb")
+        conf.write_text("vm deb {}\n")
+        self.sys.responses[("vmctl", "reload")] = Result(1, "", "nope")
+        with self.assertRaises(VmmError) as cm:
+            health.remove_broken(self.sys, self.layout, "deb")
+        self.assertIn("deb was removed but vmd could not reload", cm.exception.message)
+        self.assertIn("doas vmctl reload", cm.exception.detail)
+
+    def test_check_makes_no_root_calls(self):
+        health.check(self.sys, self.layout, [entry("a")])
+        self.assertFalse(any(root for _, root in self.sys.calls))
+
     def test_enable_vmd_and_fetch_firmware(self):
         health.enable_vmd(self.sys)
         self.assertEqual(self.sys.calls, [(["rcctl", "enable", "vmd"], True), (["rcctl", "start", "vmd"], True)])

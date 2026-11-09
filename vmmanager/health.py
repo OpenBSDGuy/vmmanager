@@ -10,6 +10,7 @@ from vmmanager.errors import VmmError
 from vmmanager.inventory import VmEntry
 from vmmanager.layout import Layout, validate_name
 from vmmanager.network import NetStatus
+from vmmanager.rootwrite import RootTransaction
 from vmmanager.system import System
 
 VMD_SOCKET = Path("/var/run/vmd.sock")
@@ -66,12 +67,21 @@ def remove_broken(sys: System, layout: Layout, name: str) -> None:
     conf = layout.system_conf(name)
     if not conf.exists():
         raise VmmError(f"No config for '{name}' under {layout.etc_dir / layout.user}")
-    tx = ops._tx(sys, layout)
+    def check() -> str | None:
+        err = ops.vm_conf_check(sys, layout)
+        # other broken VMs may remain; only the one being removed must be gone from the error
+        return None if err is None or name not in broken_vms(err, layout) else err
+
+    tx = RootTransaction(sys, check)
     tx.delete(conf)
     tx.write(layout.aggregate, ops.aggregate_text(layout, exclude=conf))
     tx.commit()
-    if _vmd_running(sys):
-        vmctl.reload(sys)
+    if ops.vm_conf_check(sys, layout) is None and _safe(lambda: _vmd_running(sys), False):
+        try:
+            vmctl.reload(sys)
+        except VmmError as e:
+            raise VmmError(f"{name} was removed but vmd could not reload its configuration",
+                           detail=f"{e.detail}\nRun: doas vmctl reload") from e
 
 
 def enable_vmd(sys: System) -> None:
