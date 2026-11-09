@@ -10,7 +10,7 @@ def _value(v) -> str:
         return str(v).lower()
     if isinstance(v, int):
         return str(v)
-    return json.dumps(v, ensure_ascii=False)  # a JSON string is a valid TOML basic string
+    return json.dumps(v, ensure_ascii=False).replace("\x7f", "\\u007f")  # a JSON string is a valid TOML basic string
 
 
 def dump(data: dict) -> str:

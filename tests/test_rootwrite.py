@@ -71,19 +71,49 @@ class RootTransactionTests(unittest.TestCase):
         state = {"fail": False}
 
         def flaky(content, dest, mode):
-            if state["fail"] and dest == self.old:
-                raise VmmError("install failed", detail="denied")
+            # other is staged last, so it is restored first in rollback
+            if state["fail"] and dest == other:
+                raise OSError("disk gone")
             real(content, dest, mode)
 
         def check():
             state["fail"] = True
             return "bad"
 
+        before = self.old.read_bytes()
         self.sys.install_file = flaky
         tx = RootTransaction(self.sys, check)
         tx.write(self.old, "changed")
         tx.write(other, "changed")
         with self.assertRaises(VmmError) as cm:
             tx.commit()
-        self.assertIn(str(self.old), cm.exception.detail)
-        self.assertEqual(other.read_text(), "o")
+        self.assertIn(str(other), cm.exception.detail)
+        self.assertIn("bad", cm.exception.detail)
+        self.assertEqual(self.old.read_bytes(), before)
+
+    def test_keyboard_interrupt_rolls_back_and_propagates(self):
+        before = self.old.read_bytes()
+        real = self.sys.install_file
+
+        def interrupted(content, dest, mode):
+            if dest == self.new:
+                raise KeyboardInterrupt
+            real(content, dest, mode)
+
+        self.sys.install_file = interrupted
+        tx = RootTransaction(self.sys, lambda: None)
+        tx.write(self.old, "changed")
+        tx.write(self.new, "fresh")
+        with self.assertRaises(KeyboardInterrupt):
+            tx.commit()
+        self.assertEqual(self.old.read_bytes(), before)
+
+    def test_existing_parent_dir_is_not_reinstalled(self):
+        dirs = []
+        real = self.sys.install_dir
+        self.sys.install_dir = lambda p: (dirs.append(p), real(p))
+        tx = RootTransaction(self.sys, lambda: None)
+        tx.write(self.old, "again")
+        tx.write(self.new, "fresh")
+        tx.commit()
+        self.assertEqual(dirs, [self.new.parent])

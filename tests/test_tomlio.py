@@ -8,7 +8,7 @@ from vmmanager import tomlio
 
 class TomlioTests(unittest.TestCase):
     def test_roundtrip_through_tomllib(self):
-        data = {"notes": 'say "hi" \\ back\nline2 é☃', "version": 2, "man_declined": True}
+        data = {"notes": 'say "hi" \\ back\nline2 é☃\x7f', "version": 2, "man_declined": True}
         self.assertEqual(tomllib.loads(tomlio.dump(data)), data)
 
     def test_dump_sorts_keys(self):

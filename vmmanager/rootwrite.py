@@ -35,11 +35,14 @@ class RootTransaction:
                 if content is None:
                     self.sys.remove_file(path)
                 else:
-                    self.sys.install_dir(path.parent)
+                    if not path.parent.is_dir():
+                        self.sys.install_dir(path.parent)
                     self.sys.install_file(content, path, mode)
             problem = self.check()
-        except VmmError as e:
-            e.detail = "\n".join(filter(None, [e.detail, self._rollback(touched)]))
+        except BaseException as e:  # incl. Ctrl-C at a doas prompt: never leave /etc half-modified
+            failed = self._rollback(touched)
+            if isinstance(e, VmmError):
+                e.detail = "\n".join(filter(None, [e.detail, failed]))
             raise
         if problem is not None:
             failed = self._rollback(touched)
@@ -56,6 +59,7 @@ class RootTransaction:
                     self.sys.remove_file(path)
                 else:
                     self.sys.install_file(old, path, mode)
-            except VmmError as e:
-                failures.append(f"{path}: {e.message} {e.detail}".strip())
+            except Exception as e:
+                detail = f"{e.message} {e.detail}" if isinstance(e, VmmError) else str(e)
+                failures.append(f"{path}: {detail}".strip())
         return "Rollback failed for: " + "; ".join(failures) if failures else ""
