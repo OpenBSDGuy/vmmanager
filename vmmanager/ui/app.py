@@ -1,6 +1,7 @@
 """VmmApp: the VM list, its key bindings and the flow behind each key."""
 
 import asyncio
+import contextlib
 
 from rich.text import Text
 from textual import on, work
@@ -16,11 +17,11 @@ from vmmanager.ui.dialogs import ConfirmScreen, HealthScreen, MessageScreen
 from vmmanager.ui.forms import VmFormScreen
 
 ROOT_ACTIONS = {"create", "update", "delete", "migrate"}
+TTY_NOTE = "The output was shown on the terminal before vmmanager redrew the screen."
 SOCKET_HELP = (
     f"vmmanager can't use the vmd socket {health.VMD_SOCKET}.\n\n"
     "Members of group wheel can use it. For other users, an administrator must set "
-    "'socket owner' in /etc/vm.conf (see vm.conf(5)).\n"
-    "If vmd is not running, an administrator can start it with: rcctl enable vmd; rcctl start vmd"
+    "'socket owner' in /etc/vm.conf (see vm.conf(5))."
 )
 
 
@@ -64,11 +65,27 @@ class VmmApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.sys.suspend = self.suspend  # doas prompts and consoles get the real terminal
+        self.sys.suspend = self._suspend  # doas prompts and consoles get the real terminal
         self.table.add_columns("Name", "State", "CPUs", "Memory", "Internet", "Owner")
         self.refresh_list()
-        self.set_interval(3, self.refresh_list)
+        self.set_interval(3, self.refresh_tick)
         self.startup()
+
+    @contextlib.contextmanager
+    def _suspend(self):
+        """App.suspend, but the app also resumes when the body raises (e.g. Ctrl-C at doas).
+
+        Textual's suspend has no try/finally around its yield, so the error is held
+        until the suspend block has finished normally.
+        """
+        error = None
+        with self.suspend():
+            try:
+                yield
+            except BaseException as e:
+                error = e
+        if error is not None:
+            raise error
 
     # --- the list ---
 
@@ -99,6 +116,10 @@ class VmmApp(App):
         if selected and selected.name in names:
             table.move_cursor(row=names.index(selected.name))
         self.show_reason()
+
+    def refresh_tick(self) -> None:
+        """The 3 s timer: refresh, and count the tick toward a force-stop offer."""
+        self.refresh_list()
         self._check_stopping()
 
     @on(DataTable.RowHighlighted)
@@ -107,7 +128,7 @@ class VmmApp(App):
         self.status_bar.update((e.reason or "") if e else "")
 
     def _check_stopping(self) -> None:
-        """Offer a force stop once a gracefully stopped VM is still up after 2 refreshes."""
+        """Offer a force stop once a gracefully stopped VM is still up after 2 timer ticks."""
         for name, seen in list(self._stopping.items()):
             e = self._entry(name)
             if e is None or e.state not in ("running", "paused"):
@@ -121,6 +142,9 @@ class VmmApp(App):
     # --- helpers for the flows ---
 
     def _can_root(self) -> bool:
+        if self.doas is None:
+            self.notify("Still checking permissions — try again in a moment", markup=False)
+            return False
         if self.doas in ("denied", "missing"):
             self.notify("needs doas — ask an admin", severity="warning", markup=False)
             return False
@@ -153,8 +177,16 @@ class VmmApp(App):
             message, detail = "Cancelled", ""
         except OSError as e:
             message, detail = str(e), ""
+        except Exception as e:  # a bug must not leave a traceback over the UI
+            message, detail = "Unexpected error", f"{type(e).__name__}: {e}"
         await self.push_screen_wait(MessageScreen(message, detail))
         return False
+
+    async def _call_tty(self, what: str, fn, *args) -> None:
+        """Like _call for functions that hand over the terminal; reports a failing exit status."""
+        rc = []
+        if await self._call(lambda: rc.append(fn(*args))) and rc[0]:
+            await self.push_screen_wait(MessageScreen(f"{what} exited with status {rc[0]}", TTY_NOTE))
 
     async def _offer_network(self, st: network.NetStatus | None = None) -> None:
         if st is None:
@@ -186,7 +218,8 @@ class VmmApp(App):
             if fix is None:
                 break
             await self._fix(fix, h)
-        if manpages.should_offer(self.layout, self.doas):
+        offer = []
+        if await self._call(lambda: offer.append(manpages.should_offer(self.layout, self.doas))) and offer[0]:
             if await self._confirm(
                     "Install man pages system-wide? (needs doas)",
                     f"Copies vmmanager(8) and vmmanager.toml(5) into {manpages.MAN_DIR} and runs makewhatis."):
@@ -226,7 +259,7 @@ class VmmApp(App):
         elif key == "firmware":
             if await self._confirm("Fetch the VM firmware?",
                                    f"Runs fw_update vmm, which installs {health.VMM_BIOS}. This needs doas."):
-                await self._call(health.fetch_firmware, self.sys)
+                await self._call_tty("fw_update", health.fetch_firmware, self.sys)
         elif key == "network":
             await self._offer_network(h.net)
         else:
@@ -262,7 +295,7 @@ class VmmApp(App):
             await self._offer_network()
         e = self._entry(spec.name)
         if e and "run" in e.actions and await self._confirm("Run now (attach console to install)?"):
-            await self._call(ops.run_vm, self.sys, L, e)
+            await self._call_tty("vmctl", ops.run_vm, self.sys, L, e)
             self.refresh_list()
 
     @work
@@ -274,13 +307,13 @@ class VmmApp(App):
     @work
     async def action_run(self) -> None:
         if e := self._ready_for("run"):
-            await self._call(ops.run_vm, self.sys, self.layout, e)
+            await self._call_tty("vmctl", ops.run_vm, self.sys, self.layout, e)
             self.refresh_list()
 
     @work
     async def action_connect(self) -> None:
         if e := self._ready_for("connect"):
-            await self._call(ops.connect_vm, self.sys, e)
+            await self._call_tty("vmctl", ops.connect_vm, self.sys, e)
             self.refresh_list()
 
     @work
@@ -354,4 +387,4 @@ class VmmApp(App):
 
     @work
     async def action_manual(self) -> None:
-        await self._call(manpages.view, self.sys)
+        await self._call_tty("man", manpages.view, self.sys)

@@ -62,6 +62,14 @@ class HealthTests(unittest.TestCase):
         self.assertFalse(h.blocking)
         self.assertTrue(h.firmware)
 
+    def test_blocking_only_when_vmd_runs(self):
+        h = health.Health(False, True, True, "ok", None, [], None)
+        self.assertTrue(h.blocking)
+        h.vmd_running = False  # no socket because vmd is down: offer to start it instead
+        self.assertFalse(h.blocking)
+        h.socket_ok = True
+        self.assertFalse(h.blocking)
+
     def test_check_never_raises_and_never_goes_root(self):
         self.sys.run = mock.Mock(side_effect=VmmError("boom"))
         self.sys.doas_state = mock.Mock(side_effect=OSError("x"))

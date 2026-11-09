@@ -29,7 +29,8 @@ class Health:
 
     @property
     def blocking(self) -> bool:
-        return not self.socket_ok
+        # without vmd there is no socket: the health screen offers to start vmd instead
+        return not self.socket_ok and self.vmd_running
 
 
 def broken_vms(error: str, layout: Layout) -> list[str]:

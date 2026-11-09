@@ -1,10 +1,12 @@
 import asyncio
+import contextlib
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from textual.widgets import Button, DataTable, Input, Static
+from textual.app import App
+from textual.widgets import Button, DataTable, Input, Static, Switch
 
 from tests.fakes import FakeSystem
 from vmmanager import tomlio
@@ -232,10 +234,12 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("x")
             await self.until(pilot, lambda: not app.workers)
             stop.assert_called_once()
+            app.refresh_list()  # refreshes after other actions don't count
             app.refresh_list()
+            app.refresh_tick()
             await pilot.pause()
             self.assertNotIsInstance(app.screen, ConfirmScreen)
-            app.refresh_list()
+            app.refresh_tick()
             confirm = await self.screen(pilot, ConfirmScreen)
             self.assertEqual(confirm.question, "web is still running. Force stop?")
             await pilot.click("#yes")
@@ -243,7 +247,7 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stop.call_args.args[2:], (True,))
 
     async def test_blocking_health_shows_quit_only(self):
-        self.health = Health(False, False, False, "ok", None, [], None)
+        self.health = Health(False, True, False, "ok", None, [], None)
         app = VmmApp(self.sys, self.layout)
         async with app.run_test() as pilot:
             screen = await self.screen(pilot, HealthScreen)
@@ -251,6 +255,104 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([b.id for b in screen.query(Button)], ["quit"])
             await pilot.click("#quit")
             await self.until(pilot, lambda: not app.is_running)
+
+    async def test_socket_missing_with_vmd_stopped_offers_enable_vmd(self):
+        self.health = Health(False, False, True, "ok", None, [], None)
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            screen = await self.screen(pilot, HealthScreen)
+            self.assertEqual([str(b.label) for b in screen.query(Button)], ["Enable vmd", "Continue"])
+
+    async def test_suspend_resumes_when_body_raises(self):
+        events = []
+
+        @contextlib.contextmanager
+        def suspend(app):  # like Textual's App.suspend: no try/finally around yield
+            events.append("enter")
+            yield
+            events.append("exit")
+
+        p = mock.patch.object(App, "suspend", suspend)
+        p.start()
+        self.addCleanup(p.stop)
+        self.status("")
+        self.managed()
+        app = VmmApp(self.sys, self.layout)
+
+        def delete(*a):
+            with app.sys.suspend():  # Ctrl-C at the doas prompt
+                raise KeyboardInterrupt
+        self.patch("vmmanager.ops.delete_vm", side_effect=delete)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            self.assertEqual(self.sys.suspend, app._suspend)
+            await pilot.press("d")
+            await self.screen(pilot, ConfirmScreen)
+            await pilot.click("#yes")
+            msg = await self.screen(pilot, MessageScreen)
+            self.assertEqual(msg.message, "Cancelled")
+        self.assertEqual(events, ["enter", "exit"])
+
+    async def test_unexpected_error_shows_message_and_app_keeps_running(self):
+        self.status("")
+        self.managed()
+        self.patch("vmmanager.ops.start_vm", side_effect=ValueError("boom"))
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            await pilot.press("s")
+            msg = await self.screen(pilot, MessageScreen)
+            self.assertEqual((msg.message, msg.detail), ("Unexpected error", "ValueError: boom"))
+            self.assertTrue(app.is_running)
+
+    async def test_man_page_offer_error_is_shown(self):
+        self.offer_man.side_effect = ValueError("bad state.toml")
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            msg = await self.screen(pilot, MessageScreen)
+            self.assertEqual(msg.message, "Unexpected error")
+
+    async def test_root_action_waits_for_permission_check(self):
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            app.doas = None
+            with mock.patch.object(app, "notify") as notify:
+                await pilot.press("n")
+                await pilot.pause()
+            self.assertEqual(notify.call_args.args[0], "Still checking permissions — try again in a moment")
+            self.assertNotIsInstance(app.screen, VmFormScreen)
+
+    async def test_internet_switch_disabled_with_other_interfaces(self):
+        self.status("")
+        self.managed(text=WEB.replace("  local interface\n", "  interface tap0\n"))
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            await pilot.press("e")
+            form = await self.screen(pilot, VmFormScreen)
+            self.assertTrue(form.query_one("#internet", Switch).disabled)
+
+    async def test_create_offers_run_now_and_reports_console_exit_status(self):
+        self.status("")
+        self.patch("vmmanager.ops.create_vm", side_effect=lambda *a: self.managed())
+        run = self.patch("vmmanager.ops.run_vm", return_value=1)
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            await pilot.press("n")
+            form = await self.screen(pilot, VmFormScreen)
+            form.query_one("#name", Input).value = "web"
+            form.query_one("#internet", Switch).value = False
+            form.query_one("#submit", Button).press()
+            first = await self.screen(pilot, ConfirmScreen)
+            await pilot.click("#yes")
+            await self.until(pilot, lambda: isinstance(app.screen, ConfirmScreen) and app.screen is not first)
+            self.assertEqual(app.screen.question, "Run now (attach console to install)?")
+            await pilot.click("#yes")
+            msg = await self.screen(pilot, MessageScreen)
+            self.assertEqual(msg.message, "vmctl exited with status 1")
+        run.assert_called_once()
 
     async def test_health_offers_remove_only_for_own_broken_vm(self):
         self.status("")
