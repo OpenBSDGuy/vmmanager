@@ -27,6 +27,10 @@ class MigrateTests(unittest.TestCase):
         self.old = self.root / "home/u/VM"
         self.old.mkdir(parents=True)
         self.set_conf((FIX / "vm.conf.box").read_text().replace("/home/kixz/VM", str(self.old)))
+        # tests create files as the current user; kixz may not exist on this machine
+        pw = mock.patch("vmmanager.migrate.pwd.getpwnam", return_value=mock.Mock(pw_uid=os.getuid()))
+        pw.start()
+        self.addCleanup(pw.stop)
         for n in ("deb_11", "debian_12", "openbsd"):
             (self.old / f"{n}.qcow2").write_bytes(b"data-" + n.encode())
 
@@ -176,6 +180,8 @@ class MigrateTests(unittest.TestCase):
         self.assertEqual((self.old / "deb_11.qcow2").read_bytes(), b"data-deb_11")
         self.assertFalse(self.layout.vm_dir("debian").exists())
         self.assertEqual(self.layout.vm_conf.read_bytes(), before)
+        self.assertFalse(self.layout.system_conf("debian").exists())
+        self.assertFalse(self.layout.aggregate.exists())
 
     def test_rollback_failure_names_where_the_disk_is(self):
         e = self.entry()
@@ -189,6 +195,78 @@ class MigrateTests(unittest.TestCase):
             with self.assertRaises(VmmError) as cm:
                 migrate.migrate_vm(self.sys, self.layout, e)
         self.assertIn(str(self.layout.vm_dir("debian") / "deb_11.qcow2"), cm.exception.detail)
+
+    def failing_rename(self):
+        real = os.rename
+        def rename(a, b):
+            if str(a).startswith(str(self.layout.user_dir)):
+                raise OSError(13, "Permission denied")
+            real(a, b)
+        return rename
+
+    def test_keyboard_interrupt_rolls_back_and_propagates(self):
+        e = self.entry()
+        before = self.layout.vm_conf.read_bytes()
+        with mock.patch.object(self.sys, "install_file", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                migrate.migrate_vm(self.sys, self.layout, e)
+        self.assertEqual((self.old / "deb_11.qcow2").read_bytes(), b"data-deb_11")
+        self.assertFalse(self.layout.vm_dir("debian").exists())
+        self.assertEqual(self.layout.vm_conf.read_bytes(), before)
+
+    def test_keyboard_interrupt_with_failed_rename_back_names_disk(self):
+        e = self.entry()
+        with mock.patch.object(self.sys, "install_file", side_effect=KeyboardInterrupt), \
+                mock.patch("vmmanager.migrate.os.rename", self.failing_rename()):
+            with self.assertRaises(VmmError) as cm:
+                migrate.migrate_vm(self.sys, self.layout, e)
+        self.assertIn(str(self.layout.vm_dir("debian") / "deb_11.qcow2"), cm.exception.detail)
+
+    def test_symlinked_disk_blocks(self):
+        deb = self.old / "deb_11.qcow2"
+        e = self.entry()
+        real = self.old / "real.qcow2"
+        deb.rename(real)
+        deb.symlink_to(real)
+        self.assertIn(f"{deb}: not a regular file", migrate.migration_blockers(self.sys, self.layout, e))
+
+    def test_missing_cdrom_blocks_and_missing_disk_not_doubled(self):
+        text = self.layout.vm_conf.read_text()
+        deb = self.old / "deb_11.qcow2"
+        self.set_conf(text.replace(f"  disk {deb}\n", f"  disk {deb}\n  cdrom {self.old}/gone.iso\n", 1))
+        self.assertEqual(self.blockers(), [f"{self.old}/gone.iso: No such file or directory"])
+        deb.unlink()
+        self.assertEqual(len(self.blockers()), 2)
+
+    def test_state_is_requeried_at_migrate_time(self):
+        e = self.entry()  # stopped
+        self.sys.responses[("vmctl", "status")] = Result(
+            0, HEAD + "    1  100     1    1.0G    1.0G   ttyp0    kixz:kixz  running debian\n", "")
+        with self.assertRaises(VmmError):
+            migrate.migrate_vm(self.sys, self.layout, e)
+        self.assertTrue((self.old / "deb_11.qcow2").exists())
+        self.assertFalse(self.layout.vm_dir("debian").exists())
+
+    def test_inspection_error_becomes_blocker(self):
+        e = self.entry()
+        with mock.patch("vmmanager.migrate.qcow2_has_backing", side_effect=OSError("io")):
+            self.assertEqual(migrate.migration_blockers(self.sys, self.layout, e),
+                             [f"could not inspect {self.old}/deb_11.qcow2: io"])
+
+    def test_uneditable_block_layout_blocks(self):
+        e = self.entry()
+        with mock.patch("vmmanager.migrate.confblock.ensure_owner", side_effect=VmmError("x")):
+            self.assertIn("its vm.conf block has a layout vmmanager can't edit",
+                          migrate.migration_blockers(self.sys, self.layout, e))
+
+    def test_extras_failure_still_reloads_and_reports(self):
+        e = self.entry()
+        with mock.patch("vmmanager.migrate.tomlio.save", side_effect=OSError("disk full")):
+            with self.assertRaises(VmmError) as cm:
+                migrate.migrate_vm(self.sys, self.layout, e)
+        self.assertIn("was migrated", cm.exception.message)
+        self.assertIn("disk full", cm.exception.detail)
+        self.assertIn((["vmctl", "reload"], True), self.sys.calls)
 
     def test_reload_failure_keeps_migration(self):
         e = self.entry()

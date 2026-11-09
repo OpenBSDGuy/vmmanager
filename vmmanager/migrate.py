@@ -1,13 +1,14 @@
 """Move a hand-written VM's disks into ~/vmmanager/<name>/ and its vm.conf block into a managed conf."""
 
 import os
+import pwd
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from vmmanager import __version__, confblock, tomlio, vmctl
+from vmmanager import __version__, confblock, ops, tomlio, vmctl
 from vmmanager.errors import VmmError
 from vmmanager.inventory import VmEntry
-from vmmanager.ops import _tx, aggregate_text, require_clean_config, with_include
+from vmmanager.ops import _require_stopped, _tx, aggregate_text, require_clean_config, with_include
 from vmmanager.system import System
 from vmmanager.layout import Layout
 
@@ -39,7 +40,8 @@ def _block(sys: System, layout: Layout, name: str) -> tuple[str, tuple[int, int]
 
 
 def migration_blockers(sys: System, layout: Layout, entry: VmEntry) -> list[str]:
-    if entry.state in ("running", "paused"):
+    # fresh status: the entry may be stale
+    if any(st.name == entry.name and st.state != "stopped" for st in vmctl.status(sys)):
         return ["the VM is running or paused"]
     try:
         text, span = _block(sys, layout, entry.name)
@@ -47,7 +49,8 @@ def migration_blockers(sys: System, layout: Layout, entry: VmEntry) -> list[str]
         return ["its vm.conf block shares a line with other text"]
     if span is None:
         return ["the block isn't found in vm.conf"]
-    f = confblock.facts(text[span[0]:span[1]])
+    block = text[span[0]:span[1]]
+    f = confblock.facts(block)
     blockers = []
     if f.uses_macros:
         blockers.append("the block uses macros")
@@ -57,50 +60,68 @@ def migration_blockers(sys: System, layout: Layout, entry: VmEntry) -> list[str]
         blockers.append("the owner is another user")
     if entry.managed or layout.system_conf(entry.name).exists():
         blockers.append("the name is already managed")
+    try:
+        confblock.ensure_owner(block, layout.user)
+    except VmmError:
+        blockers.append("its vm.conf block has a layout vmmanager can't edit")
     names = [Path(d).name for d in f.disks]
     if len(set(names)) != len(names):
         blockers.append("two disks have the same file name")
+    missing = set()
     home_dev = os.stat(layout.home).st_dev
     for disk in f.disks:
         try:
             st = os.stat(disk)
-        except OSError:
+        except FileNotFoundError:
+            missing.add(disk)
             blockers.append(f"disk {disk} is missing")
             continue
-        if qcow2_has_backing(sys, Path(disk)):
-            blockers.append(f"disk {disk} is a qcow2 with a backing file")
+        except Exception as e:
+            blockers.append(f"could not inspect {disk}: {e}")
+            continue
+        try:
+            if qcow2_has_backing(sys, Path(disk)):
+                blockers.append(f"disk {disk} is a qcow2 with a backing file")
+        except Exception as e:
+            blockers.append(f"could not inspect {disk}: {e}")
         if st.st_dev != home_dev:
             blockers.append(f"disk {disk} is on a different filesystem than your home")
         if not os.access(Path(disk).parent, os.W_OK):
             blockers.append(f"the folder of disk {disk} is not writable")
+    try:
+        problems = ops.disk_problems(block, pwd.getpwnam(layout.user).pw_uid)
+    except KeyError:
+        problems = [f"unknown user '{layout.user}'"]
+    blockers += [p for p in problems if not any(p.startswith(f"{d}:") for d in missing)]
     if layout.vm_dir(entry.name).exists():
         blockers.append(f"the folder {layout.vm_dir(entry.name)} already exists")
     return blockers
 
 
-def _rollback(moved: list[tuple[str, Path]], vm_dir: Path, err: BaseException) -> BaseException:
-    """Put disks back; returns the exception to raise, carrying any failure to do so."""
+def _rollback(moved: list[tuple[str, Path]], vm_dir: Path) -> VmmError | None:
+    """Put disks back; returns an error saying where things are if that failed."""
     failures = []
     for old, new in reversed(moved):
+        if not os.path.lexists(new):  # the rename never happened
+            continue
         try:
             os.rename(new, old)
         except OSError as e:
             failures.append(f"could not move {new} back to {old}: {e.strerror}; your disk is at {new}")
-    try:
-        vm_dir.rmdir()
-    except OSError:
-        pass
-    if not failures or isinstance(err, KeyboardInterrupt):
-        return err
-    extra = "\n".join(failures)
-    if isinstance(err, VmmError):
-        return VmmError(err.message, detail=f"{err.detail}\n{extra}".strip())
-    return VmmError(f"Migration failed: {err}", detail=extra)
+    if vm_dir.exists():
+        try:
+            vm_dir.rmdir()
+        except OSError as e:
+            failures.append(f"could not remove {vm_dir}: {e.strerror}")
+    if not failures:
+        return None
+    return VmmError("Migration failed and your disks could not all be moved back", detail="\n".join(failures))
 
 
 def migrate_vm(sys: System, layout: Layout, entry: VmEntry) -> None:
     name = entry.name
     require_clean_config(sys, layout)
+    _require_stopped(sys, name)
     blockers = migration_blockers(sys, layout, entry)
     if blockers:
         raise VmmError(f"Can't migrate {name} automatically", detail="\n".join(blockers) + "\n\n" + MANUAL_STEPS)
@@ -116,24 +137,33 @@ def migrate_vm(sys: System, layout: Layout, entry: VmEntry) -> None:
     try:
         vm_dir.mkdir(parents=True)
         for old, new in mapping.items():
-            os.rename(old, new)
             moved.append((old, Path(new)))
+            os.rename(old, new)
         tx = _tx(sys, layout)
         tx.write(conf_path, new_block)
         tx.write(layout.aggregate, aggregate_text(layout, extra=conf_path))
         tx.write(layout.vm_conf, with_include(confblock.comment_out(text, span, marker), layout))
         tx.commit()
     except BaseException as e:  # incl. Ctrl-C; RootTransaction already restored /etc
-        raise _rollback(moved, vm_dir, e) from e
+        failed = _rollback(moved, vm_dir)
+        if failed:
+            failed.detail = f"{type(e).__name__}: {e}\n{failed.detail}"
+            raise failed from e
+        raise
     # /etc now references the new disk paths: from here nothing is rolled back
-    tomlio.save(layout.extras(name), {
-        "migrated_from": ", ".join(old_paths),
-        "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "version": __version__,
-    })
+    problems = []
+    try:
+        tomlio.save(layout.extras(name), {
+            "migrated_from": ", ".join(old_paths),
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "version": __version__,
+        })
+    except Exception as e:
+        problems.append(f"could not save {layout.extras(name)}: {e}")
     try:
         vmctl.reload(sys)
     except Exception as e:
-        detail = e.detail if isinstance(e, VmmError) else str(e)
+        problems.append(e.detail if isinstance(e, VmmError) else str(e))
+    if problems:
         raise VmmError(f"{name} was migrated but vmd could not reload its configuration",
-                       detail=f"{detail}\nRun: doas vmctl reload") from e
+                       detail="\n".join(problems) + "\nRun: doas vmctl reload")
