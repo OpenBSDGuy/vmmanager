@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vmmanager"
+version = "0.1.0"
+description = "A Textual TUI for managing OpenBSD vmd virtual machines"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Kasra Madadipouya", email = "kasra@madadipouya.com" }]
+keywords = ["openbsd", "vmd", "vmctl", "vm", "tui", "textual", "cli"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: POSIX :: BSD :: OpenBSD",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Emulators",
+]
+dynamic = ["dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/kasramp/vmmanager"
+Repository = "https://github.com/kasramp/vmmanager"
+Issues = "https://github.com/kasramp/vmmanager/issues"
+
+[project.scripts]
+vmmanager = "vmmanager.cli:main"
+
+[tool.setuptools]
+packages = ["vmmanager", "vmmanager.ui"]
+
+[tool.setuptools.package-data]
+vmmanager = ["man/*"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
