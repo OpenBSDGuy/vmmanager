@@ -83,8 +83,10 @@ def create_vm(sys: System, layout: Layout, spec: VmSpec) -> None:
     taken.update({p.stem: p.parent.name for p in layout.etc_dir.glob(f"*/{spec.name}.conf")})
     if spec.name in taken:
         raise VmmError(f"name '{spec.name}' is already used by {taken[spec.name]}")
-
     vm_dir = layout.vm_dir(spec.name)
+    if vm_dir.exists():
+        raise VmmError(f"folder {vm_dir} already exists — delete or rename it first")
+
     vm_dir.mkdir(parents=True)
     try:
         vmctl.create_disk(sys, layout.disk(spec.name), spec.disk_size)
@@ -98,10 +100,16 @@ def create_vm(sys: System, layout: Layout, spec: VmSpec) -> None:
         tx.write(layout.aggregate, aggregate_text(layout, extra=conf_path))
         tx.write(layout.vm_conf, with_include(sys.read_file(layout.vm_conf) or "", layout))
         tx.commit()
-        vmctl.reload(sys)
-    except BaseException:  # incl. Ctrl-C; RootTransaction already restored /etc
+    except BaseException:  # incl. Ctrl-C; RootTransaction already restored /etc, so the folder is orphaned
         shutil.rmtree(vm_dir, ignore_errors=True)
         raise
+    # /etc now references the disk: on reload failure keep everything
+    try:
+        vmctl.reload(sys)
+    except Exception as e:
+        detail = e.detail if isinstance(e, VmmError) else str(e)
+        raise VmmError(f"{spec.name} was created but vmd could not reload its configuration",
+                       detail=f"{detail}\nRun: doas vmctl reload") from e
 
 
 def _own_conf(layout: Layout, name: str) -> Path:
@@ -112,20 +120,22 @@ def _own_conf(layout: Layout, name: str) -> Path:
 
 
 def update_vm(sys: System, layout: Layout, name: str, changes: dict[str, object]) -> None:
+    validate_name(name)
     path = _own_conf(layout, name)
     require_clean_config(sys, layout)
     _require_stopped(sys, name)
     tx = _tx(sys, layout)
     tx.write(path, confblock.edit_block(sys.read_file(path) or "", changes))
     tx.commit()
-    vmctl.reload(sys)
     if "cdrom" in changes:
         extras = tomlio.load(layout.extras(name))
         extras["iso"] = changes["cdrom"] or ""
         tomlio.save(layout.extras(name), extras)
+    vmctl.reload(sys)
 
 
 def delete_vm(sys: System, layout: Layout, name: str) -> None:
+    validate_name(name)
     path = _own_conf(layout, name)
     require_clean_config(sys, layout)
     _require_stopped(sys, name)
@@ -137,6 +147,7 @@ def delete_vm(sys: System, layout: Layout, name: str) -> None:
 
 
 def remove_vm_files(layout: Layout, name: str) -> None:
+    validate_name(name)
     shutil.rmtree(layout.vm_dir(name))
 
 

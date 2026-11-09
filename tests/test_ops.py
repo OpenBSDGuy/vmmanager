@@ -1,7 +1,9 @@
 import os
 import pwd
+import stat
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests.fakes import FakeSystem
@@ -95,7 +97,59 @@ class OpsTests(unittest.TestCase):
         self.assertEqual(cm.exception.detail, "bad iso")
         self.assertEqual(self.snapshot(), before)
         self.assertFalse(self.layout.vm_dir("deb").exists())
+        self.assertEqual(set(self.layout.user_dir.iterdir()), set())
         self.assertNotIn(["vmctl", "reload"], self.commands())
+
+    def test_create_keeps_everything_when_reload_fails(self):
+        self.sys.responses[("vmctl", "reload")] = Result(1, "", "no vmd")
+        with self.assertRaises(VmmError) as cm:
+            ops.create_vm(self.sys, self.layout, VmSpec("deb"))
+        self.assertEqual(cm.exception.message, "deb was created but vmd could not reload its configuration")
+        self.assertEqual(cm.exception.detail, "no vmd\nRun: doas vmctl reload")
+        self.assertTrue(self.layout.vm_dir("deb").is_dir())
+        self.assertTrue(self.layout.system_conf("deb").is_file())
+
+    def test_create_refuses_existing_folder(self):
+        self.layout.vm_dir("deb").mkdir()
+        before = self.snapshot()
+        with self.assertRaises(VmmError) as cm:
+            ops.create_vm(self.sys, self.layout, VmSpec("deb"))
+        self.assertIn("already exists", cm.exception.message)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_bad_names_rejected(self):
+        victim = self.layout.user_dir / "keep"
+        victim.write_text("x")
+        for bad in ("", "../x"):
+            for call in (lambda n: ops.update_vm(self.sys, self.layout, n, {"memory": "2G"}),
+                         lambda n: ops.delete_vm(self.sys, self.layout, n),
+                         lambda n: ops.remove_vm_files(self.layout, n)):
+                with self.assertRaises(VmmError):
+                    call(bad)
+        self.assertTrue(victim.exists())
+
+    def test_update_and_delete_refuse_when_config_broken(self):
+        ops.create_vm(self.sys, self.layout, VmSpec("deb"))
+        self.sys.responses[("vmd", "-n")] = Result(1, "", "syntax error")
+        before = self.snapshot()
+        for call in (lambda: ops.update_vm(self.sys, self.layout, "deb", {"memory": "2G"}),
+                     lambda: ops.delete_vm(self.sys, self.layout, "deb")):
+            with self.assertRaises(VmmError) as cm:
+                call()
+            self.assertIn("already has errors", cm.exception.message)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_update_saves_extras_even_if_reload_fails(self):
+        ops.create_vm(self.sys, self.layout, VmSpec("deb", iso="/a.iso"))
+        self.sys.responses[("vmctl", "reload")] = Result(1, "", "no vmd")
+        with self.assertRaises(VmmError):
+            ops.update_vm(self.sys, self.layout, "deb", {"cdrom": "/b.iso"})
+        self.assertEqual(tomlio.load(self.layout.extras("deb"))["iso"], "/b.iso")
+
+    def test_disk_problems_accepts_root_owned_regular_file(self):
+        fake = os.stat_result((stat.S_IFREG | 0o600, 1, 1, 1, 0, 0, 0, 0, 0, 0))
+        with mock.patch("os.lstat", return_value=fake):
+            self.assertEqual(ops.disk_problems(self.block('disk "/x"'), os.getuid() + 1), [])
 
     def test_create_refuses_when_config_already_broken(self):
         self.sys.responses[("vmd", "-n")] = Result(1, "", "line 3: syntax error")
