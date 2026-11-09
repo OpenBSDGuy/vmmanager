@@ -1,0 +1,565 @@
+.Dd November 9, 2026
+.Dt VMMANAGER 8
+.Os
+.Sh NAME
+.Nm vmmanager
+.Nd terminal interface for vmd virtual machines
+.Sh SYNOPSIS
+.Nm
+.Op Fl \-version | \-man | \-install\-man
+.Sh DESCRIPTION
+.Nm
+is a full-screen terminal program for creating and running virtual machines
+with
+.Xr vmd 8 .
+It lists every VM that
+.Xr vmd 8
+knows about, with its live state from
+.Xr vmctl 8 ,
+and offers actions on the VMs that belong to the user running it.
+.Pp
+Each VM gets one folder,
+.Pa ~/vmmanager/<name> ,
+holding its disk and a small
+.Xr vmmanager.toml 5
+file.
+The VM's configuration stays in
+.Xr vm.conf 5 ,
+which remains the source of truth for everything
+.Xr vmd 8
+understands.
+.Nm
+only runs on
+.Ox .
+.Pp
+The options are as follows:
+.Bl -tag -width Ds
+.It Fl \-version
+Print the version and exit.
+.It Fl \-man
+Show this manual page with
+.Ic man \-l
+without installing it.
+This works on any system.
+.It Fl \-install\-man
+Install this page and
+.Xr vmmanager.toml 5
+into
+.Pa /usr/local/man
+and rebuild the database with
+.Xr makewhatis 8 .
+Needs
+.Xr doas 1 .
+.El
+.Pp
+On first start, users who may use
+.Xr doas 1
+are asked once whether to install the man pages system-wide.
+Answering no is remembered and the question is not asked again.
+After an upgrade, users who did not decline are asked again.
+.Sh KEYS
+The main list accepts these keys.
+Actions apply to the selected VM and work only when they make sense for its
+state.
+The footer lists all keys; pressing one that does not apply to the selected VM
+explains why.
+.Bl -tag -width Ds
+.It Ic n
+Create a VM.
+Asks for name, memory (default 1G), CPUs (1), disk size (20G), an optional
+install ISO and whether the VM gets Internet access (default on).
+The name must start with a letter and contain only letters, digits,
+.Sq \&. ,
+.Sq _
+and
+.Sq \- .
+.It Ic s
+Start the VM in the background.
+.It Ic r
+Run: start the VM and attach its serial console.
+.It Ic o
+Connect: attach the console of a running VM.
+.It Ic x
+Stop the VM.
+The first stop is graceful; if the VM stays up,
+.Nm
+offers to force it.
+.It Ic e
+Update memory, CPUs, ISO and the Internet setting of a stopped VM.
+Any other line of the VM's block is kept as written and shown read-only.
+.It Ic d
+Delete a stopped VM.
+The configuration is removed first.
+The VM's folder, with its disk, is kept unless you agree to remove it.
+Creating a VM whose name still has a folder is refused.
+.It Ic m
+Migrate a VM that was not created by
+.Nm
+(see
+.Sx MIGRATING ) .
+.It Ic \&?
+Show this manual page.
+.It Ic q
+Quit.
+.El
+.Pp
+On a VM console, type
+.Ql ~.
+at the start of a line to leave it and return to
+.Nm .
+.Ql ~^D
+is also accepted, as printed by
+.Xr vmctl 8
+console.
+.Pp
+VMs owned by other users are listed but have no actions.
+.Sh FILES
+.Bl -tag -width Ds
+.It Pa ~/vmmanager/<name>/<name>.qcow2
+The VM's disk, created with
+.Ic vmctl create .
+.It Pa ~/vmmanager/<name>/vmmanager.toml
+Extras that
+.Xr vm.conf 5
+cannot hold.
+See
+.Xr vmmanager.toml 5 .
+.It Pa ~/vmmanager/state.toml
+Tool state, such as the installed man page version.
+.It Pa /etc/vm.conf
+Gets one added line,
+.Li include "/etc/vmmanager/vmmanager.conf" ,
+under a
+.Li # added by vmmanager
+comment.
+Migrated blocks are commented out with the marker
+.Li # moved to vmmanager YYYY-MM-DD:\ .
+Nothing else is changed.
+.It Pa /etc/vmmanager/vmmanager.conf
+Regenerated: one include line per managed VM.
+.It Pa /etc/vmmanager/<user>/<name>.conf
+The
+.Ic vm
+block of one managed VM.
+Blocks created by
+.Nm
+always have
+.Ic owner <user>
+and
+.Ic disable ,
+so
+.Xr vmd 8
+never starts them by itself.
+Migrated blocks get
+.Ic owner
+added if missing and otherwise keep their original lines, including their own
+.Ic disable
+or lack of it.
+.It Pa /etc/vmmanager/pf.conf
+The NAT rules, loaded as a
+.Xr pf.conf 5
+anchor.
+.It Pa /etc/pf.conf
+Gets a marked 3-line block, see
+.Sx NETWORKING .
+.It Pa /etc/sysctl.conf
+Gets the line
+.Li net.inet.ip.forwarding=1
+whenever it is missing from the file, whatever the running value is.
+.It Pa /usr/local/man/man8/vmmanager.8 , /usr/local/man/man5/vmmanager.toml.5
+The installed pages.
+.El
+.Pp
+Files under
+.Pa /etc/vmmanager
+are
+.Li root:wheel
+mode 0644 and directories 0755.
+Existing files keep their mode.
+.Sh PRIVILEGES
+Listing VMs needs access to the
+.Xr vmd 8
+socket, which wheel members have.
+For other users, the administrator must set
+.Ic socket owner
+in
+.Xr vm.conf 5 .
+.Pp
+Starting, stopping and attaching consoles on your own VMs needs no root.
+Creating, updating, deleting and migrating VMs, setting up the network,
+enabling
+.Xr vmd 8
+and installing the man pages use
+.Xr doas 1 .
+Each root step is announced before the prompt.
+.Pp
+Without the
+.Ic persist
+option in
+.Xr doas.conf 5 ,
+every root step asks for the password.
+Recommended:
+.Bd -literal -offset indent
+permit persist :wheel
+.Ed
+.Pp
+Every change to
+.Pa /etc
+is checked with
+.Ic vmd \-n
+(or
+.Ic pfctl \-nf
+for pf).
+If the check fails, every changed file is restored exactly as it was and the
+error text is shown.
+If
+.Xr vmd 8
+cannot reload after a create, a migrate or the removal of a broken VM from the
+health check, the change is kept and you are told to run
+.Ic doas vmctl reload .
+Update and delete show the reload error as it is.
+.Pp
+If
+.Ic vmd \-n
+already fails before
+.Nm
+changes anything,
+.Nm
+refuses create, update, delete and migrate and shows the error.
+Removing a broken VM from the health check and the network setup still work.
+Hand-written configuration is never repaired.
+.Sh NETWORKING
+A VM has one network setting, Internet on or off.
+On means the block has a
+.Ic local interface :
+.Xr vmd 8
+gives the guest an address in 100.64.0.0/10 and runs DHCP.
+Off means no interface at all.
+Nothing else (switches, bridges, port forwarding) is managed.
+.Pp
+So the guests can reach the internet,
+.Nm
+sets up the host once, when the first VM with Internet is created or migrated.
+It asks first and shows what it will do:
+.Bl -bullet
+.It
+Writes
+.Pa /etc/vmmanager/pf.conf :
+.Bd -literal -offset indent
+match out on egress inet from 100.64.0.0/10 to any nat-to (egress)
+pass in quick inet proto { udp tcp } from 100.64.0.0/10 to any port domain rdr-to 127.0.0.1 port domain
+.Ed
+.It
+Appends to
+.Pa /etc/pf.conf
+this marked block, then loads it with
+.Ic pfctl \-f :
+.Bd -literal -offset indent
+# added by vmmanager
+anchor "vmmanager"
+load anchor "vmmanager" from "/etc/vmmanager/pf.conf"
+.Ed
+.It
+Turns on IP forwarding with
+.Ic sysctl net.inet.ip.forwarding=1
+and adds that line to
+.Pa /etc/sysctl.conf .
+.It
+Enables and starts
+.Xr unwind 8
+if neither it nor unbound is running.
+Guests ask the host for DNS and pf redirects the queries to the resolver on
+127.0.0.1.
+.El
+.Pp
+A missing
+.Pa /etc/pf.conf
+is never created; the setup is refused.
+If loading the rules fails, both files are restored.
+.Pp
+The check at start-up needs no root and runs only if you own a managed VM
+with Internet.
+It only tests that
+.Pa /etc/vmmanager/pf.conf
+exists, that IP forwarding is on, and that unwind or unbound is running.
+If the pf rules were flushed by hand, NAT stays off until
+.Ic doas pfctl \-f /etc/pf.conf
+or a reboot, and
+.Nm
+does not detect it.
+.Pp
+The anchor is loaded at the end of the main ruleset, so its rules win over
+earlier rules that are not
+.Ic quick ;
+earlier
+.Ic quick
+rules still take precedence.
+Hand-written NAT or
+.Ic rdr-to
+lines are left alone.
+If you had your own NAT rules for 100.64.0.0/10, you can delete them from
+.Pa /etc/pf.conf
+and run
+.Ic doas pfctl \-f /etc/pf.conf ;
+the anchor now does the job.
+.Pp
+To undo everything:
+delete the three marked lines from
+.Pa /etc/pf.conf ,
+run
+.Ic doas rm /etc/vmmanager/pf.conf ,
+remove
+.Li net.inet.ip.forwarding=1
+from
+.Pa /etc/sysctl.conf ,
+reload with
+.Ic doas pfctl \-f /etc/pf.conf ,
+and if you do not want the resolver,
+.Ic doas rcctl disable unwind
+and
+.Ic doas rcctl stop unwind .
+Then
+.Ic doas sysctl net.inet.ip.forwarding=0 .
+.Sh MIGRATING
+A VM that is in
+.Xr vm.conf 5
+but was not created by
+.Nm
+is listed greyed out and has one action, migrate
+.Pq Ic m .
+It is never done automatically.
+It is offered only when the block's
+.Ic owner
+is you, or there is no
+.Ic owner
+line; in that case
+.Ic owner <user>
+is added.
+.Pp
+The VM must be stopped.
+.Nm
+then:
+.Bl -enum
+.It
+Moves the disks into
+.Pa ~/vmmanager/<name>/
+(a rename, which keeps owner and mode).
+.It
+Writes the block, copied as it was but with the new disk paths, to
+.Pa /etc/vmmanager/<user>/<name>.conf
+and adds it to the aggregate file.
+.It
+Adds the include line to
+.Pa /etc/vm.conf
+if missing, and comments out the old block there with the marker
+.Li # moved to vmmanager YYYY-MM-DD: .
+Nothing is deleted.
+.It
+Checks with
+.Ic vmd \-n
+and reloads.
+On failure the disks are moved back and every file is restored.
+.El
+.Pp
+Migration is refused, with the reason shown, when:
+.Bl -bullet -compact
+.It
+the VM is running or paused;
+.It
+the block uses macros, is an instance of a template, or shares a line with
+other text;
+.It
+the block is not in
+.Pa /etc/vm.conf
+(for example it is in another included file);
+.It
+the owner is another user, or the name is already managed;
+.It
+a disk is missing, is a qcow2 with a backing file, is on another filesystem
+than your home, is in a folder you cannot write to, or two disks have the same
+file name;
+.It
+a disk or the ISO is not a regular file owned by you or root (see
+.Sx SECURITY ) ,
+or the ISO is missing;
+.It
+its
+.Xr vm.conf 5
+block has a layout
+.Nm
+cannot edit;
+.It
+the folder
+.Pa ~/vmmanager/<name>
+already exists.
+.El
+.Pp
+To migrate by hand:
+.Bl -enum
+.It
+Stop the VM.
+.It
+Run
+.Ic mkdir \-p ~/vmmanager/<name>
+and move the disks there.
+.It
+As root, create
+.Pa /etc/vmmanager/<user>/<name>.conf
+with the vm block, the new disk paths and
+.Ic owner <user> .
+.It
+Add
+.Li include "/etc/vmmanager/<user>/<name>.conf"
+to
+.Pa /etc/vmmanager/vmmanager.conf ,
+and
+.Li include "/etc/vmmanager/vmmanager.conf"
+to
+.Pa /etc/vm.conf
+if missing.
+.It
+Comment out the old block in
+.Pa /etc/vm.conf .
+.It
+Run
+.Ic doas vmd \-n ,
+then
+.Ic doas vmctl reload .
+.El
+.Sh SECURITY
+.Xr vmd 8
+opens disk and ISO files as root.
+A symbolic link swapped in for a disk, pointing at a device such as
+.Pa /dev/sd0c ,
+would give the guest the host's disk.
+Before it starts a VM,
+.Nm
+therefore checks every disk and ISO path in the VM's block: each, including the ISO, must be a
+regular file, not a symbolic link or device, owned by the VM's owner or root.
+Otherwise the VM is not started and the files are listed.
+.Pp
+Only the owner of a VM may act on it.
+Other users' VMs are shown read-only.
+Since every owner already has
+.Xr doas 1 ,
+this is defence in depth, not a barrier against an administrator.
+.Pp
+A config file writable by an ordinary user would be read by
+.Xr vmd 8
+as root, so everything under
+.Pa /etc/vmmanager
+is written through
+.Xr doas 1
+and owned by root.
+.Sh HEALTH CHECK
+At start-up
+.Nm
+checks, without asking for root:
+.Bl -bullet -compact
+.It
+that the
+.Xr vmd 8
+socket is usable;
+.It
+that
+.Xr vmd 8
+is running, and offers
+.Ic rcctl enable
+and
+.Ic rcctl start
+if not;
+.It
+that
+.Pa /etc/firmware/vmm-bios
+exists, and offers
+.Xr fw_update 8
+if not;
+.It
+that the network setup is complete, see
+.Sx NETWORKING ;
+.It
+that
+.Ic vmd \-n
+passes.
+If a VM folder was deleted by hand, the check names the broken VM and, for
+its owner, offers to remove its configuration.
+.El
+.Sh UNINSTALL
+Do the steps in this order, so that
+.Xr pf.conf 5
+and
+.Xr vm.conf 5
+never point at files that are gone.
+.Bl -enum
+.It
+Remove the program:
+.Bd -literal -offset indent
+pipx uninstall vmmanager
+.Ed
+.It
+Remove the man pages:
+.Bd -literal -offset indent
+doas rm /usr/local/man/man8/vmmanager.8 /usr/local/man/man5/vmmanager.toml.5 && doas makewhatis /usr/local/man
+.Ed
+.It
+Remove the three marked lines (the
+.Li # added by vmmanager
+comment, the
+.Ic anchor
+line and the
+.Ic load anchor
+line) from
+.Pa /etc/pf.conf
+and the
+.Li net.inet.ip.forwarding=1
+line from
+.Pa /etc/sysctl.conf
+if you do not want it, then run
+.Ic doas pfctl \-f /etc/pf.conf .
+See
+.Sx NETWORKING
+for the resolver.
+.It
+Remove the line
+.Li include "/etc/vmmanager/vmmanager.conf"
+and its
+.Li # added by vmmanager
+comment from
+.Pa /etc/vm.conf ,
+run
+.Ic doas vmd \-n
+and
+.Ic doas vmctl reload .
+.It
+Only now delete the configuration:
+.Ic doas rm \-r /etc/vmmanager .
+.It
+Your VMs' disks stay in
+.Pa ~/vmmanager ,
+which you may keep or delete.
+.El
+.Pp
+To give a migrated VM back to a hand-written
+.Pa /etc/vm.conf ,
+note that its commented-out block, marked
+.Li # moved to vmmanager ,
+still holds the old disk paths.
+Move the disks back first (or edit the paths in the block), remove the VM's
+file under
+.Pa /etc/vmmanager/<user>
+and its include line from
+.Pa /etc/vmmanager/vmmanager.conf ,
+uncomment the block in
+.Pa /etc/vm.conf ,
+then run
+.Ic doas vmd \-n
+and
+.Ic doas vmctl reload .
+.Sh SEE ALSO
+.Xr doas.conf 5 ,
+.Xr pf.conf 5 ,
+.Xr vm.conf 5 ,
+.Xr vmmanager.toml 5 ,
+.Xr unwind 8 ,
+.Xr vmctl 8 ,
+.Xr vmd 8

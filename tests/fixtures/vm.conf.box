@@ -1,0 +1,25 @@
+vm "debian" {
+  cpus 4
+  memory 8G
+  disable
+  disk /home/kixz/VM/deb_11.qcow2
+  local interface
+  owner kixz:kixz
+}
+
+vm "debian-12" {
+  cpus 4
+  memory 8G
+  disable
+  disk /home/kixz/VM/debian_12.qcow2
+  local interface
+  owner kixz:kixz
+}
+
+vm "openbsd" {
+  memory 8G
+  disable
+  disk /home/kixz/VM/openbsd.qcow2
+  local interface
+  owner kixz:kixz
+}
