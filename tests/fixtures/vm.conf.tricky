@@ -1,0 +1,33 @@
+# a comment with a brace { and vm "fake" {
+ramdisk="/bsd.rd"
+
+switch "uplink" {
+  interface bridge0
+}
+
+vm "macro_vm" {
+  memory 512M
+  boot $ramdisk
+  disable
+  disk "/home/u/vmmanager/macro_vm/macro_vm.qcow2"
+  owner u
+}
+
+vm "nested" {
+  memory 1G
+  # keep this comment { with a brace
+    cpus 2
+  disable
+  disk "/home/u/vmmanager/nested/nested.qcow2"
+  interface { switch "uplink" }
+  local interface
+  owner u
+}
+
+vm "nested" instance "inst" {
+  memory 2G
+  disable
+  owner u
+}
+
+vm plain { memory 1G }
