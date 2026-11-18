@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from vmmanager import network, ops, vmctl
+from vmmanager import network, ops, share, vmctl
 from vmmanager.errors import VmmError
 from vmmanager.inventory import VmEntry
 from vmmanager.layout import Layout, validate_name
@@ -26,6 +26,7 @@ class Health:
     config_error: str | None
     broken: list[str]
     net: NetStatus | None
+    shares_stale: bool = False
 
     @property
     def blocking(self) -> bool:
@@ -60,6 +61,8 @@ def check(sys: System, layout: Layout, entries: list[VmEntry]) -> Health:
         config_error=config_error,
         broken=broken_vms(config_error, layout) if config_error else [],
         net=_safe(lambda: network.net_status(sys, layout), None) if wants_net else None,
+        shares_stale=layout.sync_script.exists() and _safe(
+            lambda: share.stale(sys, layout, sys.run(["vmctl", "status"], check=False).out), False),
     )
 
 

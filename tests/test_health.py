@@ -52,6 +52,12 @@ class HealthTests(unittest.TestCase):
         h = health.check(self.sys, self.layout, [entry("a")])
         self.assertIsNotNone(h.net)
 
+    def test_health_reports_stale_shares(self):
+        with mock.patch("vmmanager.share.stale", return_value=True):
+            self.assertFalse(health.check(self.sys, self.layout, []).shares_stale)
+            self.layout.sync_script.write_text("")
+            self.assertTrue(health.check(self.sys, self.layout, []).shares_stale)
+
     def test_blocking_when_no_socket(self):
         h = health.check(self.sys, self.layout, [])
         self.assertTrue(h.blocking)
