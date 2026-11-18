@@ -366,9 +366,9 @@ The first time, and again whenever something below is missing,
 .Nm
 asks first and lists what it will do, all with
 .Xr doas 1 .
-If the network setup of
+If the pf rules of
 .Sx NETWORKING
-is also missing or outdated, the question names each of its changes
+are missing or outdated, the question also names each change of the network setup
 (the lines of
 .Pa /etc/vmmanager/pf.conf
 and
@@ -680,7 +680,7 @@ never point at files that are gone.
 .It
 If you shared folders, stop sharing every VM first: press
 .Ic f
-on each shared VM and choose to stop sharing.
+on each shared VM with Internet on and choose to stop sharing.
 By hand instead, delete each
 .Li # vmmanager:
 marker line and the line after it from
@@ -727,16 +727,17 @@ run
 and
 .Ic doas vmctl reload .
 .It
-If you shared folders, remove the sync script, the NFS services and the boot
-line:
+If you shared folders, delete the line that runs
+.Pa /etc/vmmanager/sync-exports
+(and its
+.Li # added by vmmanager
+comment) from
+.Pa /etc/rc.local ,
+then remove the script:
 .Bd -literal -offset indent
 doas rm /etc/vmmanager/sync-exports
 .Ed
 .Pp
-Delete the line that runs it (and its
-.Li # added by vmmanager
-comment) from
-.Pa /etc/rc.local .
 Then run
 .Ic doas rcctl disable portmap mountd nfsd
 and
