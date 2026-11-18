@@ -9,6 +9,10 @@ class LayoutTests(unittest.TestCase):
     def test_paths_default_layout(self):
         lay = Layout(etc=Path("/etc"), home=Path("/home/u"), user="u")
         self.assertEqual(lay.system_conf("deb"), Path("/etc/vmmanager/u/deb.conf"))
+        self.assertEqual(lay.share_file("deb"), Path("/etc/vmmanager/u/deb.share"))
+        self.assertEqual(lay.share_file("deb", "o"), Path("/etc/vmmanager/o/deb.share"))
+        self.assertEqual((lay.exports, lay.rc_local, lay.sync_script),
+                         (Path("/etc/exports"), Path("/etc/rc.local"), Path("/etc/vmmanager/sync-exports")))
         self.assertEqual(lay.disk("deb"), Path("/home/u/vmmanager/deb/deb.qcow2"))
         self.assertEqual(lay.include_line, 'include "/etc/vmmanager/vmmanager.conf"')
 

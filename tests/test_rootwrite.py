@@ -27,6 +27,21 @@ class RootTransactionTests(unittest.TestCase):
         self.assertEqual(self.sys.modes[self.new], 0o644)
         self.assertEqual(self.new.read_text(), "fresh")
 
+    def test_write_with_mode(self):
+        tx = RootTransaction(self.sys, lambda: None)
+        tx.write(self.old, "changed", 0o755)
+        tx.write(self.new, "fresh", 0o755)
+        tx.commit()
+        self.assertEqual(self.sys.modes[self.old], 0o755)
+        self.assertEqual(self.sys.modes[self.new], 0o755)
+
+    def test_rollback_restores_old_mode_after_write_with_mode(self):
+        tx = RootTransaction(self.sys, lambda: "bad")
+        tx.write(self.old, "changed", 0o755)
+        with self.assertRaises(VmmError):
+            tx.commit()
+        self.assertEqual(self.old.stat().st_mode & 0o777, 0o600)
+
     def test_commit_rolls_back_on_check_failure(self):
         before = self.old.read_bytes()
         tx = RootTransaction(self.sys, lambda: "bad line 3")
