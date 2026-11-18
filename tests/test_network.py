@@ -6,10 +6,11 @@ from pathlib import Path
 from tests.fakes import FakeSystem
 from vmmanager.errors import VmmError
 from vmmanager.layout import Layout
-from vmmanager.network import ANCHOR_RULES, net_status, pf_lines, setup_explanation, setup_network
+from vmmanager.network import ANCHOR_RULES, anchor_current, net_status, pf_lines, setup_explanation, setup_network
 from vmmanager.system import Result
 
 PF = "set skip on lo\npass\n"
+OLD_ANCHOR = ANCHOR_RULES.split("\n", 2)[0] + "\n" + ANCHOR_RULES.split("\n", 2)[1] + "\n"
 
 
 class NetworkTests(unittest.TestCase):
@@ -116,3 +117,25 @@ class NetworkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_anchor_blocks_nfs_from_outside_vm_network(self):
+        self.assertIn("block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }\n", ANCHOR_RULES)
+
+    def test_old_anchor_counts_as_not_set_up(self):
+        self.layout.pf_anchor.parent.mkdir()
+        self.layout.pf_anchor.write_text(OLD_ANCHOR)
+        st = net_status(self.sys, self.layout)
+        self.assertFalse(st.anchor_file)
+        self.assertFalse(anchor_current(self.sys, self.layout))
+        self.assertIn("keeps NFS off the local network", setup_explanation(st))
+        self.assertNotIn("NAT", setup_explanation(st))
+        self.layout.pf_anchor.write_text(ANCHOR_RULES)
+        self.assertTrue(anchor_current(self.sys, self.layout))
+
+    def test_setup_rewrites_old_anchor(self):
+        self.layout.pf_conf.write_text(PF + pf_lines(self.layout))
+        self.layout.pf_anchor.parent.mkdir()
+        self.layout.pf_anchor.write_text(OLD_ANCHOR)
+        setup_network(self.sys, self.layout)
+        self.assertEqual(self.layout.pf_anchor.read_text(), ANCHOR_RULES)
+        self.assertEqual(self.layout.pf_conf.read_text(), PF + pf_lines(self.layout))

@@ -8,7 +8,8 @@ from vmmanager.rootwrite import RootTransaction
 from vmmanager.system import System
 
 ANCHOR_RULES = ("match out on egress inet from 100.64.0.0/10 to any nat-to (egress)\n"
-                "pass in quick inet proto { udp tcp } from 100.64.0.0/10 to any port domain rdr-to 127.0.0.1 port domain\n")
+                "pass in quick inet proto { udp tcp } from 100.64.0.0/10 to any port domain rdr-to 127.0.0.1 port domain\n"
+                "block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }\n")
 ANCHOR_LINE = 'anchor "vmmanager"'
 FORWARDING = "net.inet.ip.forwarding=1"
 
@@ -22,6 +23,7 @@ class NetStatus:
     anchor_file: bool
     forwarding: bool
     resolver: bool
+    anchor_outdated: bool = False
 
     @property
     def ok(self) -> bool:
@@ -30,7 +32,9 @@ class NetStatus:
 
 def setup_explanation(st: NetStatus) -> str:
     bullets = []
-    if not st.anchor_file:
+    if st.anchor_outdated:
+        bullets.append("Update the vmmanager pf rules (keeps NFS off the local network)")
+    elif not st.anchor_file:
         bullets.append("Add NAT rules so VMs can reach the internet: writes /etc/vmmanager/pf.conf and adds a marked 3-line block (a comment and 2 lines) to /etc/pf.conf")
     if not st.forwarding:
         bullets.append("Turn on IP forwarding (sysctl net.inet.ip.forwarding=1, saved in /etc/sysctl.conf)")
@@ -47,8 +51,13 @@ def _resolver_up(sys: System) -> bool:
     return any(sys.run(["rcctl", "check", svc], check=False).rc == 0 for svc in ("unwind", "unbound"))
 
 
+def anchor_current(sys: System, layout: Layout) -> bool:
+    return sys.read_file(layout.pf_anchor) == ANCHOR_RULES
+
+
 def net_status(sys: System, layout: Layout) -> NetStatus:
-    return NetStatus(layout.pf_anchor.exists(), _forwarding_on(sys), _resolver_up(sys))
+    return NetStatus(anchor_current(sys, layout), _forwarding_on(sys), _resolver_up(sys),
+                     layout.pf_anchor.exists() and not anchor_current(sys, layout))
 
 
 def setup_network(sys: System, layout: Layout) -> None:
