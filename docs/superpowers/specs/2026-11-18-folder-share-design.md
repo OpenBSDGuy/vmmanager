@@ -1,6 +1,6 @@
 # vmmanager — share a host folder with a VM (key `f`)
 
-Date: 2026-11-18. Status: draft for approval.
+Date: 2026-11-18. Status: approved by the user 2026-11-18.
 
 ## Intent
 
@@ -191,8 +191,11 @@ with a fix button that runs the sync through doas.
 ### Man page
 
 vmmanager(8) gets a SHARED FOLDERS section: what is changed on the host
-(`/etc/exports` lines, `rc.local` line, NFS daemons, the sync script), the
-guest commands, the reboot behaviour, that a VM's share is reachable only from
+(`/etc/exports` lines, `rc.local` line, NFS daemons, the sync script); how to
+mount the share in the guest, both one-off (mount now) and permanent (the
+`@reboot` root-crontab line, added with `crontab -e`), for Linux and OpenBSD
+guests, including the packages a guest needs (Debian: `nfs-common`); the
+reboot behaviour and the boot window, that a VM's share is reachable only from
 that VM, and how to undo it (Stop sharing; then remove the rc.local line and
 disable the daemons by hand). UNINSTALL lists the sync script and the
 `rc.local` line.
