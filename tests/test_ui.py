@@ -13,6 +13,7 @@ from vmmanager import tomlio
 from vmmanager.errors import VmmError
 from vmmanager.health import Health
 from vmmanager.layout import Layout
+from vmmanager.network import NetStatus
 from vmmanager.ops import VmSpec
 from vmmanager.system import Result
 from vmmanager.ui.app import VmmApp
@@ -418,15 +419,17 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
         self.status("")
         self.managed()
         setup, set_share = self.share_setup()
+        folder = tempfile.mkdtemp()
+        self.addCleanup(lambda: Path(folder).rmdir())
         app = VmmApp(self.sys, self.layout)
         async with app.run_test() as pilot:
             await self.started(pilot)
             await pilot.press("f")
             dialog = await self.screen(pilot, ShareScreen)
             self.assertEqual(dialog.query_one("#folder", Input).value, f"{self.layout.home}/")
-            dialog.query_one("#folder", Input).value = "/home/kixz/share"
+            dialog.query_one("#folder", Input).value = folder
             await pilot.pause()
-            self.assertIn("/home/kixz/share", self.text(dialog.query_one("#guest", Static)))
+            self.assertIn(folder, self.text(dialog.query_one("#guest", Static)))
             self.assertEqual(list(dialog.query("#stop")), [])
             dialog.query_one("#share", Button).press()
             first = await self.screen(pilot, ConfirmScreen)
@@ -434,13 +437,13 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("/etc/rc.local", first.detail)
             await pilot.click("#yes")
             await self.until(pilot, lambda: isinstance(app.screen, ConfirmScreen) and app.screen is not first)
-            self.assertEqual(app.screen.question, "Share /home/kixz/share with web?")
+            self.assertEqual(app.screen.question, f"Share {folder} with web?")
             self.assertIn(str(self.layout.share_file("web")), app.screen.detail)
             self.assertIn("/etc/exports", app.screen.detail)
             await pilot.click("#yes")
             await self.until(pilot, lambda: not app.workers)
         setup.assert_called_once_with(self.sys, self.layout)
-        set_share.assert_called_once_with(self.sys, self.layout, "web", "/home/kixz/share")
+        set_share.assert_called_once_with(self.sys, self.layout, "web", folder)
 
     async def test_share_without_internet_explains(self):
         self.status("")
@@ -507,6 +510,50 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("down", "u")
             await self.until(pilot, lambda: result)
         self.assertEqual(result, [str(Path(tmp.name) / "sub")])
+
+    async def test_share_setup_names_network_changes_and_runs_them_first(self):
+        self.status("")
+        self.managed()
+        order = mock.Mock()
+        self.patch("vmmanager.share.setup_needed", return_value=["x"])
+        self.patch("vmmanager.network.anchor_current", return_value=False)
+        self.patch("vmmanager.network.net_status", return_value=NetStatus(False, False, False, False))
+        self.patch("vmmanager.network.setup_network", side_effect=lambda *a: order("network"))
+        self.patch("vmmanager.share.setup_sharing", side_effect=lambda *a: order("sharing"))
+        self.patch("vmmanager.share.set_share")
+        folder = tempfile.mkdtemp()
+        self.addCleanup(lambda: Path(folder).rmdir())
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            await pilot.press("f")
+            dialog = await self.screen(pilot, ShareScreen)
+            dialog.query_one("#folder", Input).value = folder
+            dialog.query_one("#share", Button).press()
+            first = await self.screen(pilot, ConfirmScreen)
+            self.assertIn("/etc/pf.conf", first.detail)
+            self.assertIn("/etc/sysctl.conf", first.detail)
+            await pilot.click("#yes")
+            await self.until(pilot, lambda: isinstance(app.screen, ConfirmScreen) and app.screen is not first)
+            await pilot.click("#no")
+            await self.until(pilot, lambda: not app.workers)
+        self.assertEqual([c.args[0] for c in order.call_args_list], ["network", "sharing"])
+
+    async def test_share_of_missing_folder_stops_before_any_setup(self):
+        self.status("")
+        self.managed()
+        setup, set_share = self.share_setup()
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            await pilot.press("f")
+            dialog = await self.screen(pilot, ShareScreen)
+            dialog.query_one("#folder", Input).value = "/no/such/folder"
+            dialog.query_one("#share", Button).press()
+            msg = await self.screen(pilot, MessageScreen)
+            self.assertEqual((msg.message, msg.detail), ("Cannot share /no/such/folder", "the folder does not exist"))
+        setup.assert_not_called()
+        set_share.assert_not_called()
 
 
 if __name__ == "__main__":
