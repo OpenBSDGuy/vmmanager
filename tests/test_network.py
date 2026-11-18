@@ -10,7 +10,8 @@ from vmmanager.network import ANCHOR_RULES, anchor_current, net_status, pf_lines
 from vmmanager.system import Result
 
 PF = "set skip on lo\npass\n"
-OLD_ANCHOR = ANCHOR_RULES.split("\n", 2)[0] + "\n" + ANCHOR_RULES.split("\n", 2)[1] + "\n"
+OLD_ANCHOR = ("match out on egress inet from 100.64.0.0/10 to any nat-to (egress)\n"
+              "pass in quick inet proto { udp tcp } from 100.64.0.0/10 to any port domain rdr-to 127.0.0.1 port domain\n")
 
 
 class NetworkTests(unittest.TestCase):
@@ -114,10 +115,6 @@ class NetworkTests(unittest.TestCase):
         self.assertNotIn("forwarding", text)
         self.assertNotIn("NAT", text)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_anchor_blocks_nfs_from_outside_vm_network(self):
         self.assertIn("block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }\n", ANCHOR_RULES)
 
@@ -139,3 +136,7 @@ if __name__ == "__main__":
         setup_network(self.sys, self.layout)
         self.assertEqual(self.layout.pf_anchor.read_text(), ANCHOR_RULES)
         self.assertEqual(self.layout.pf_conf.read_text(), PF + pf_lines(self.layout))
+
+
+if __name__ == "__main__":
+    unittest.main()
