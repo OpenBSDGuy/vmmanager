@@ -435,6 +435,17 @@ gives that VM, so no other VM can mount the folder.
 Lines without the marker are never touched.
 Stopping the share, deleting the VM or turning its Internet off removes the
 lines again.
+.Pp
+The folder is not a hard boundary.
+The kernel exports a whole file system to an address, and
+.Xr mountd 8
+only checks the folder when the guest mounts.
+Root inside the guest can craft NFS file handles that reach any file on the
+same file system, with the rights of the user who owns the VM.
+Other VMs and the local network still cannot mount anything.
+To share a folder with a VM you do not trust, put the folder on its own
+file system (a separate partition).
+.Pp
 The folder must exist and its path must be absolute, without spaces,
 .Ql # ,
 .Ql \e ,

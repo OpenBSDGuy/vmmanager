@@ -33,6 +33,9 @@ class ShareScreen(Dialog):
                 if self.folder:
                     yield Button("Stop sharing", id="stop")
                 yield Button("Cancel", id="cancel")
+            yield Static("Note: NFS exports the whole file system to this VM. Root in the guest could reach files "
+                         "outside this folder with your rights. For a VM you don't trust, share a folder on its own "
+                         "partition. See vmmanager(8), SHARED FOLDERS.", markup=False)
             yield Static(share.guest_commands(start), id="guest", markup=False)
 
     def _chosen(self) -> str:
