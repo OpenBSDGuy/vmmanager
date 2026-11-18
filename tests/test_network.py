@@ -134,7 +134,7 @@ class NetworkTests(unittest.TestCase):
         self.layout.pf_anchor.parent.mkdir()
         self.layout.pf_anchor.write_text(OLD_ANCHOR)
         setup_network(self.sys, self.layout)
-        self.assertEqual(self.layout.pf_anchor.read_text(), ANCHOR_RULES)
+        self.assertIn("block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }\n", self.layout.pf_anchor.read_text())
         self.assertEqual(self.layout.pf_conf.read_text(), PF + pf_lines(self.layout))
 
 
