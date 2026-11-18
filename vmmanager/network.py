@@ -32,6 +32,12 @@ class NetStatus:
         return self.anchor_file and self.forwarding and self.resolver
 
 
+def setup_question(st: NetStatus) -> str:
+    if st.anchor_outdated and st.forwarding and st.resolver:
+        return "Update the vmmanager pf rules?"
+    return "Set up networking so VMs can reach the internet?"
+
+
 def setup_explanation(st: NetStatus) -> str:
     bullets = []
     if st.anchor_outdated:

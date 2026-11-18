@@ -203,7 +203,7 @@ class VmmApp(App):
                 await self.push_screen_wait(MessageScreen(e.message, e.detail))
                 return
         if not st.ok and await self._confirm(
-                "Set up networking so VMs can reach the internet?",
+                network.setup_question(st),
                 network.setup_explanation(st) + "\n\nThis needs doas."):
             await self._call(network.setup_network, self.sys, self.layout)
 

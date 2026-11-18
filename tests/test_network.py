@@ -7,7 +7,8 @@ from pathlib import Path
 from tests.fakes import FakeSystem
 from vmmanager.errors import VmmError
 from vmmanager.layout import Layout
-from vmmanager.network import ANCHOR_RULES, anchor_current, net_status, pf_lines, setup_explanation, setup_network
+from vmmanager.network import (ANCHOR_RULES, NetStatus, anchor_current, net_status, pf_lines, setup_explanation,
+                               setup_network, setup_question)
 from vmmanager.system import Result
 
 PF = "set skip on lo\npass\n"
@@ -143,6 +144,14 @@ class NetworkTests(unittest.TestCase):
 
     def test_anchor_blocks_nfs_from_outside_vm_network(self):
         self.assertIn("block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }\n", ANCHOR_RULES)
+
+    def test_question_says_update_when_only_the_pf_rules_are_outdated(self):
+        outdated = NetStatus(False, True, True, anchor_outdated=True)
+        self.assertEqual(setup_question(outdated), "Update the vmmanager pf rules?")
+        missing = NetStatus(False, True, True)
+        self.assertEqual(setup_question(missing), "Set up networking so VMs can reach the internet?")
+        outdated_and_no_resolver = NetStatus(False, True, False, anchor_outdated=True)
+        self.assertEqual(setup_question(outdated_and_no_resolver), "Set up networking so VMs can reach the internet?")
 
     def test_old_anchor_counts_as_not_set_up(self):
         self.layout.pf_anchor.parent.mkdir()
