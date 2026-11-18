@@ -200,7 +200,9 @@ Files under
 .Pa /etc/vmmanager
 are
 .Li root:wheel
-mode 0644 and directories 0755.
+mode 0644 and directories 0755, except
+.Pa sync-exports ,
+which is 0755.
 Existing files keep their mode.
 .Sh PRIVILEGES
 Listing VMs needs access to the
@@ -308,7 +310,9 @@ The check at start-up needs no root and runs only if you own a managed VM
 with Internet.
 It only tests that
 .Pa /etc/vmmanager/pf.conf
-exists, that IP forwarding is on, and that unwind or unbound is running.
+matches the current rules (an older file is offered as
+.Dq Update the vmmanager pf rules ) ,
+that IP forwarding is on, and that unwind or unbound is running.
 If the pf rules were flushed by hand, NAT stays off until
 .Ic doas pfctl \-f /etc/pf.conf
 or a reboot, and
@@ -361,7 +365,18 @@ user who owns the VM on the host.
 The first time, and again whenever something below is missing,
 .Nm
 asks first and lists what it will do, all with
-.Xr doas 1 :
+.Xr doas 1 .
+If the network setup of
+.Sx NETWORKING
+is also missing or outdated, the question names each of its changes
+(the lines of
+.Pa /etc/vmmanager/pf.conf
+and
+.Pa /etc/pf.conf ,
+IP forwarding in
+.Pa /etc/sysctl.conf ,
+the resolver) before anything runs.
+The setup steps are:
 .Bl -bullet
 .It
 Installs
@@ -414,6 +429,10 @@ The folder must exist and its path must be absolute, without spaces,
 .Ql # ,
 .Ql \e
 or quotes.
+.Nm
+refuses to share
+.Pa /
+(the whole filesystem) and says to choose a folder inside it.
 .Pp
 The VM's ids change when
 .Xr vmd 8
@@ -659,6 +678,16 @@ and
 never point at files that are gone.
 .Bl -enum
 .It
+If you shared folders, stop sharing every VM first: press
+.Ic f
+on each shared VM and choose to stop sharing.
+By hand instead, delete each
+.Li # vmmanager:
+marker line and the line after it from
+.Pa /etc/exports ,
+then run
+.Ic doas pkill \-HUP \-x mountd .
+.It
 Remove the program:
 .Bd -literal -offset indent
 pipx uninstall openbsd-vmmanager
@@ -698,16 +727,16 @@ run
 and
 .Ic doas vmctl reload .
 .It
-If you shared folders: stop sharing every VM with
-.Ic f ,
-remove the line that runs
-.Pa /etc/vmmanager/sync-exports
-(and its
+If you shared folders, remove the sync script, the NFS services and the boot
+line:
+.Bd -literal -offset indent
+doas rm /etc/vmmanager/sync-exports
+.Ed
+.Pp
+Delete the line that runs it (and its
 .Li # added by vmmanager
 comment) from
-.Pa /etc/rc.local ,
-and run
-.Ic doas rm /etc/vmmanager/sync-exports .
+.Pa /etc/rc.local .
 Then run
 .Ic doas rcctl disable portmap mountd nfsd
 and
