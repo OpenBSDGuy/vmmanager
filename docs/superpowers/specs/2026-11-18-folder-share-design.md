@@ -155,6 +155,34 @@ pattern as the networking setup (`network.py`):
 - `rcctl set nfsd flags -t -n 4` (TCP only, matches dockerctl);
 - `rcctl enable portmap mountd nfsd`, then start them.
 
+### Keeping NFS off the LAN (pf)
+
+Tested 2026-11-18 with dockerctl's live export: a mount from the box's LAN
+address is refused ("Permission denied"), and a forged VM address gets no
+answer (nfsd is TCP only; replies go to the VM's tap). But portmap (111) and
+nfsd (2049) are reachable from the LAN, and `showmount -e` lists the folders
+and VM addresses to anyone. The user asked to close that.
+
+vmmanager's pf anchor (`/etc/vmmanager/pf.conf`, `network.ANCHOR_RULES`) gets
+one more line:
+
+```
+block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }
+```
+
+- `on ! lo0`: mountd registers with portmap over loopback; that must pass.
+- Host-wide, so it also covers dockerctl's export.
+- mountd has no option for a fixed port (mountd(8) on 8.0: only `-d` and
+  the exports file); it takes a random reserved port. It is not blocked:
+  blocking the whole reserved range would break other services. With portmap
+  blocked a LAN client can't look up mountd's port; a port scan could still
+  reach it and read the export list, but never mount. Documented in the man
+  page.
+- Existing installs: the network health check compares the anchor file with
+  `ANCHOR_RULES`, so the changed rules show up as "networking not set up" and
+  the existing fix re-installs the anchor. The share setup also requires the
+  current anchor.
+
 ### Detecting stale exports without root
 
 On startup and refresh the TUI computes the expected vmmanager lines (from
@@ -206,6 +234,9 @@ disable the daemons by hand). UNINSTALL lists the sync script and the
   hosts (dockerctl's `/home/kixz` and a vmmanager subfolder), are accepted by
   mountd together (`exports(5)`: a host only once per filesystem).
 - pf on the box (and vmmanager's anchor) does not block NFS from a guest.
+- With the new anchor line: ports 111 and 2049 are closed from the laptop
+  (LAN), dockerctl's `docker run -v` bind mount still works, `rpcinfo -p
+  localhost` still lists mountd.
 - The `@reboot` crontab line mounts on a Debian and an OpenBSD guest.
 - After a reboot with shifted ids, `rc.local`'s sync fixes the lines before a
   guest mounts.
