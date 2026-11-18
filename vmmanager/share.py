@@ -5,7 +5,7 @@ import os
 
 from vmmanager.errors import VmmError
 from vmmanager.layout import Layout
-from vmmanager.network import anchor_current
+from vmmanager.network import _read_without_root, anchor_current
 from vmmanager.rootwrite import RootTransaction
 from vmmanager.sync_exports import MARK, parse_ids, valid_folder, wanted_lines
 from vmmanager.system import System
@@ -45,8 +45,8 @@ def setup_needed(sys: System, layout: Layout) -> list[str]:
         bullets.append(f"Install the sync script {layout.sync_script} (writes vmmanager's lines in /etc/exports)")
     if rc_line(layout) not in (sys.read_file(layout.rc_local) or "").splitlines():
         bullets.append("Run the sync script at boot (adds a line to /etc/rc.local)")
-    if any(sys.run(["rcctl", "check", svc], check=False).rc != 0 for svc in NFS_SERVICES):
-        bullets.append("Enable and start the NFS services portmap, mountd and nfsd (TCP only, 4 server processes)")
+    if any(sys.run(["rcctl", "get", svc, "status"], check=False).rc != 0 for svc in NFS_SERVICES):
+        bullets.append("Enable the NFS services portmap, mountd and nfsd (TCP only, 4 server processes)")
     if not anchor_current(sys, layout):
         bullets.append(PF_BULLET)
     return bullets
@@ -63,8 +63,7 @@ def setup_sharing(sys: System, layout: Layout) -> None:
         tx.write(layout.rc_local, rc + "\n# added by vmmanager\n" + line + "\n")
     tx.commit()
     sys.run(["rcctl", "set", "nfsd", "flags", "-t", "-n", "4"], root=True)
-    sys.run(["rcctl", "enable", *NFS_SERVICES], root=True)
-    sys.run(["rcctl", "start", *NFS_SERVICES], root=True)
+    sys.run(["rcctl", "enable", *NFS_SERVICES], root=True)  # not started: mountd and nfsd refuse to start until /etc/exports has a non-comment line
 
 
 def folder(layout: Layout, name: str) -> str | None:
@@ -83,7 +82,7 @@ def check_folder(folder: str) -> None:
     if folder.startswith("/") and os.path.normpath(folder).lstrip("/") == "":
         raise VmmError("Refusing to share the whole filesystem (/)", detail="choose a folder inside it")
     if not valid_folder(folder):
-        raise VmmError(f"Cannot share {folder!r}", detail="use an absolute path without spaces, # \\ or quotes")
+        raise VmmError(f"Cannot share {folder!r}", detail="use an absolute path without spaces, # \\ $ % ` or quotes")
     if not os.path.isdir(folder):
         raise VmmError(f"Cannot share {folder}", detail="the folder does not exist")
 
@@ -97,6 +96,10 @@ def set_share(sys: System, layout: Layout, name: str, folder: str | None) -> Non
     else:
         tx.write(layout.share_file(name), folder + "\n")
     tx.commit()
+    if folder is not None:  # the sync has now written a line, so the daemons can start
+        for svc in NFS_SERVICES:
+            if sys.run(["rcctl", "check", svc], check=False).rc != 0:
+                sys.run(["rcctl", "start", svc], root=True)
 
 
 def sync(sys: System, layout: Layout) -> None:
@@ -107,14 +110,17 @@ def sync(sys: System, layout: Layout) -> None:
         raise VmmError("Updating /etc/exports failed", detail=problem)
 
 
-def _marked_pairs(text: str) -> list[str]:
+def _marked_pairs(text: str, vms: set[str]) -> list[str]:
     lines = text.splitlines()
-    return [x for i, l in enumerate(lines) if l.startswith(MARK) for x in lines[i:i + 2]]
+    return [x for i, l in enumerate(lines) if l.startswith(MARK) and l[len(MARK) + 2:-1] in vms for x in lines[i:i + 2]]
 
 
 def stale(sys: System, layout: Layout, status_text: str) -> bool:
-    wanted = wanted_lines(layout.etc_dir, parse_ids(status_text))[0]
-    return _marked_pairs(sys.read_file(layout.exports) or "") != wanted
+    # only this user's VMs: another user's folder can look missing from here (0700 home)
+    mine = {p.stem for p in (layout.etc_dir / layout.user).glob("*.*")}
+    wanted = wanted_lines(layout.etc_dir, {vm: i for vm, i in parse_ids(status_text).items() if vm in mine})[0]
+    text = _read_without_root(layout.exports)
+    return text is not None and _marked_pairs(text, mine) != wanted
 
 
 def guest_commands(folder: str) -> str:

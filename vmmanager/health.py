@@ -50,6 +50,11 @@ def _vmd_running(sys: System) -> bool:
     return sys.run(["rcctl", "check", "vmd"], check=False).rc == 0
 
 
+def _shares_stale(sys: System, layout: Layout) -> bool:
+    r = sys.run(["vmctl", "status"], check=False)
+    return r.rc == 0 and share.stale(sys, layout, r.out)
+
+
 def check(sys: System, layout: Layout, entries: list[VmEntry]) -> Health:
     config_error = _safe(lambda: ops.vm_conf_check(sys, layout), None)
     wants_net = any(e.managed and e.mine and e.internet for e in entries)
@@ -61,8 +66,7 @@ def check(sys: System, layout: Layout, entries: list[VmEntry]) -> Health:
         config_error=config_error,
         broken=broken_vms(config_error, layout) if config_error else [],
         net=_safe(lambda: network.net_status(sys, layout), None) if wants_net else None,
-        shares_stale=layout.sync_script.exists() and _safe(
-            lambda: share.stale(sys, layout, sys.run(["vmctl", "status"], check=False).out), False),
+        shares_stale=layout.sync_script.exists() and _safe(lambda: _shares_stale(sys, layout), False),
     )
 
 

@@ -58,6 +58,13 @@ class HealthTests(unittest.TestCase):
             self.layout.sync_script.write_text("")
             self.assertTrue(health.check(self.sys, self.layout, []).shares_stale)
 
+    def test_shares_not_stale_when_vmctl_status_fails(self):
+        self.layout.sync_script.write_text("")
+        self.sys.responses[("vmctl", "status")] = Result(1, "", "no vmd")
+        with mock.patch("vmmanager.share.stale", return_value=True) as stale:
+            self.assertFalse(health.check(self.sys, self.layout, []).shares_stale)
+        stale.assert_not_called()
+
     def test_blocking_when_no_socket(self):
         h = health.check(self.sys, self.layout, [])
         self.assertTrue(h.blocking)

@@ -358,7 +358,9 @@ class VmmApp(App):
             return
         if not await self._confirm(
                 f"Update {e.name}?",
-                f"Rewrites {e.conf_path} ({', '.join(changes)}), then reloads vmd. This needs doas."):
+                f"Rewrites {e.conf_path} ({', '.join(changes)}), then reloads vmd."
+                + (f" Also updates {self.layout.exports}." if "internet" in changes else "")
+                + " This needs doas."):
             return
         ok = await self._call(ops.update_vm, self.sys, self.layout, e.name, changes)
         self.refresh_list()
@@ -371,8 +373,9 @@ class VmmApp(App):
             return
         if not await self._confirm(
                 f"Delete {e.name}?",
-                f"Removes {e.conf_path} and its line in {self.layout.aggregate}, then reloads vmd. "
-                "This needs doas."):
+                f"Removes {e.conf_path} and its line in {self.layout.aggregate}"
+                + (f", deletes {self.layout.share_file(e.name)} and updates {self.layout.exports}" if e.shared else "")
+                + ", then reloads vmd. This needs doas."):
             return
         ok = await self._call(ops.delete_vm, self.sys, self.layout, e.name)
         self.refresh_list()
@@ -418,7 +421,7 @@ class VmmApp(App):
             explain = "\n\nThe networking part:\n" + network.setup_explanation(st)
             needed = [b for b in needed if b != share.PF_BULLET]  # the networking part says it
         files = (f"\n\nChanges {L.sync_script}, {L.rc_local}, the nfsd flags (rcctl set nfsd flags -t -n 4) "
-                 "and the services (rcctl enable and start portmap mountd nfsd)"
+                 "and the services (rcctl enable portmap mountd nfsd)"
                  + ". This needs doas." + explain)
         if not await self._confirm("Set up folder sharing?", "\n".join(f"- {b}" for b in needed) + files):
             return False
@@ -441,7 +444,8 @@ class VmmApp(App):
             if not await self._set_up_sharing():
                 return
             question = f"Share {folder} with {e.name}?"
-            detail = f"Writes {L.share_file(e.name)} and updates {L.exports}. This needs doas."
+            detail = (f"Writes {L.share_file(e.name)} and updates {L.exports}, then starts portmap, mountd and nfsd "
+                      "if they are not running. This needs doas.")
         else:
             folder = None
             question = f"Stop sharing {e.shared} with {e.name}?"

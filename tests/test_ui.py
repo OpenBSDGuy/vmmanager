@@ -221,6 +221,41 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
         delete.assert_called_once_with(self.sys, self.layout, "web")
         remove.assert_called_once_with(self.layout, "web")
 
+    async def test_delete_confirm_names_exports_only_for_shared_vm(self):
+        self.status("")
+        self.managed()
+        self.patch("vmmanager.ops.delete_vm")
+        for shared in (False, True):
+            if shared:
+                self.layout.share_file("web").write_text("/home/kixz/share\n")
+            app = VmmApp(self.sys, self.layout)
+            async with app.run_test() as pilot:
+                await self.started(pilot)
+                await pilot.press("d")
+                first = await self.screen(pilot, ConfirmScreen)
+                self.assertEqual("/etc/exports" in first.detail, shared)
+                self.assertEqual(str(self.layout.share_file("web")) in first.detail, shared)
+                await pilot.click("#no")
+
+    async def test_update_confirm_names_exports_when_internet_changes(self):
+        self.status("")
+        self.managed()
+        self.patch("vmmanager.ops.update_vm")
+        self.patch("vmmanager.network.net_status", return_value=NetStatus(True, True, True, False))
+        for toggle in (False, True):
+            app = VmmApp(self.sys, self.layout)
+            async with app.run_test() as pilot:
+                await self.started(pilot)
+                await pilot.press("e")
+                form = await self.screen(pilot, VmFormScreen)
+                form.query_one("#memory", Input).value = "2G"
+                if toggle:
+                    form.query_one("#internet", Switch).value = False
+                form.query_one("#submit", Button).press()
+                first = await self.screen(pilot, ConfirmScreen)
+                self.assertEqual("/etc/exports" in first.detail, toggle)
+                await pilot.click("#no")
+
     async def test_update_sends_only_changed_keys_and_shows_kept_lines(self):
         self.status("")
         self.managed()
@@ -440,6 +475,7 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.screen.question, f"Share {folder} with web?")
             self.assertIn(str(self.layout.share_file("web")), app.screen.detail)
             self.assertIn("/etc/exports", app.screen.detail)
+            self.assertIn("starts portmap, mountd and nfsd", app.screen.detail)
             await pilot.click("#yes")
             await self.until(pilot, lambda: not app.workers)
         setup.assert_called_once_with(self.sys, self.layout)

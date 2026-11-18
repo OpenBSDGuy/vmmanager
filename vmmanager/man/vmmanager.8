@@ -391,11 +391,21 @@ Sets the
 .Xr nfsd 8
 flags to
 .Li \-t \-n 4
-(TCP only, 4 server processes) and enables and starts
+(TCP only, 4 server processes) and enables
 .Xr portmap 8 ,
 .Xr mountd 8
 and
 .Xr nfsd 8 .
+They are not started yet:
+.Xr mountd 8
+and
+.Xr nfsd 8
+refuse to start while
+.Pa /etc/exports
+has no line that is not a comment.
+.Nm
+starts whichever of the three is not running after the first share has
+written its line.
 .It
 Updates
 .Pa /etc/vmmanager/pf.conf
@@ -427,8 +437,10 @@ Stopping the share, deleting the VM or turning its Internet off removes the
 lines again.
 The folder must exist and its path must be absolute, without spaces,
 .Ql # ,
-.Ql \e
-or quotes.
+.Ql \e ,
+.Ql $ ,
+.Ql % ,
+backticks or quotes.
 .Nm
 refuses to share
 .Pa /
@@ -455,7 +467,13 @@ never start at boot (they are
 .Ic disable ) ,
 so only a hand-written VM that is
 .Ic enable Ns d
-could be affected.
+could be affected, and the VM that
+.Xr dockerctl 8
+starts from
+.Va pkg_scripts ,
+which runs before
+.Pa /etc/rc.local .
+A stale line can, until the sync, point at whatever VM now has that id.
 .Pp
 The guest side is not set up by
 .Nm
@@ -668,7 +686,16 @@ that
 .Ic vmd \-n
 passes.
 If a VM folder was deleted by hand, the check names the broken VM and, for
-its owner, offers to remove its configuration.
+its owner, offers to remove its configuration;
+.It
+that your shared folders match
+.Pa /etc/exports ,
+only when
+.Pa /etc/vmmanager/sync-exports
+exists.
+If not, it says "Shared folders are out of date" and offers
+.Ic Update shares ,
+which runs the sync script.
 .El
 .Sh UNINSTALL
 Do the steps in this order, so that

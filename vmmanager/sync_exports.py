@@ -12,7 +12,7 @@ MARK = "# vmmanager: the next line is managed by vmmanager"
 
 def valid_folder(path: str) -> bool:
     return (path.startswith("/") and os.path.normpath(path).lstrip("/") != ""  # never the whole filesystem
-            and not re.search(r'[\s#\\"]', path))
+            and not re.search(r'[\s#\\"$`%]', path))
 
 
 def parse_ids(status_text: str) -> dict[str, int]:

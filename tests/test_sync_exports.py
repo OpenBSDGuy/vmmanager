@@ -33,6 +33,10 @@ class WantedLinesTests(Base):
             self.assertFalse(valid_folder(path), path)
         self.assertTrue(valid_folder("/a/b"))
 
+    def test_valid_folder_refuses_shell_and_cron_specials(self):
+        for ch in "$`%":
+            self.assertFalse(valid_folder(f"/a{ch}b"), ch)
+
     def test_line_per_shared_vm_with_internet(self):
         share = self.tmp / "share"
         share.mkdir()
