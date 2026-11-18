@@ -8,15 +8,16 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Static
 
-from vmmanager import health, inventory, manpages, migrate, network, ops
+from vmmanager import health, inventory, manpages, migrate, network, ops, share
 from vmmanager.errors import VmmError
 from vmmanager.inventory import VmEntry
 from vmmanager.layout import Layout
 from vmmanager.system import System
 from vmmanager.ui.dialogs import ConfirmScreen, HealthScreen, MessageScreen
 from vmmanager.ui.forms import VmFormScreen
+from vmmanager.ui.share import ShareScreen
 
-ROOT_ACTIONS = {"create", "update", "delete", "migrate"}
+ROOT_ACTIONS = {"create", "update", "delete", "migrate", "share"}
 TTY_NOTE = "The output was shown on the terminal before vmmanager redrew the screen."
 SOCKET_HELP = (
     f"vmmanager can't use the vmd socket {health.VMD_SOCKET}.\n\n"
@@ -30,7 +31,7 @@ def _cells(e: VmEntry) -> tuple[object, ...]:
     cpus = (f and f.cpus) or (st and st.vcpus) or ""
     memory = (f and f.memory) or (st and st.maxmem) or ""
     internet = ("on" if e.internet else "off") if f else ""
-    return e.name, e.state, cpus, memory, internet, e.owner
+    return e.name, e.state, cpus, memory, internet, e.owner, e.shared or ""
 
 
 class VmmApp(App):
@@ -45,6 +46,7 @@ class VmmApp(App):
         ("e", "update", "Update"),
         ("d", "delete", "Delete"),
         ("m", "migrate", "Migrate"),
+        ("f", "share", "Share"),
         ("question_mark", "manual", "Manual"),
         ("q", "quit", "Quit"),
     ]
@@ -67,6 +69,7 @@ class VmmApp(App):
     def on_mount(self) -> None:
         self.sys.suspend = self._suspend  # doas prompts and consoles get the real terminal
         self.table.add_columns("Name", "State", "CPUs", "Memory", "Internet", "Owner")
+        self.table.add_column("Shared", width=30)
         self.refresh_list()
         self.set_interval(3, self.refresh_tick)
         self.startup()
@@ -111,7 +114,7 @@ class VmmApp(App):
         table.clear()
         for e in entries:
             style = "dim" if not e.actions or e.actions == {"migrate"} else ""
-            table.add_row(*(Text(str(c), style=style) for c in _cells(e)), key=e.name)
+            table.add_row(*(Text(str(c), style=style) for c in _cells(e)), height=None, key=e.name)
         names = [e.name for e in entries]
         if selected and selected.name in names:
             table.move_cursor(row=names.index(selected.name))
@@ -158,6 +161,8 @@ class VmmApp(App):
             return None
         if action not in e.actions:
             why = (f"{e.name} is already managed by vmmanager" if action == "migrate" and e.managed
+                   else "needs internet on: the share runs over the VM's network link"
+                   if action == "share" and e.managed and e.mine
                    else e.reason or f"{e.name} is {e.state}")
             self.notify(why, severity="warning", markup=False)
             return None
@@ -250,6 +255,9 @@ class VmmApp(App):
         if h.net and not h.net.ok:
             lines.append("Networking for VMs is not set up:\n" + network.setup_explanation(h.net))
             fixes.append(("network", "Set up networking"))
+        if h.shares_stale:
+            lines.append("Shared folders are out of date: /etc/exports does not match the shares.")
+            fixes.append(("shares", "Update shares"))
         return "\n\n".join(lines), fixes
 
     async def _fix(self, key: str, h: health.Health) -> None:
@@ -264,6 +272,11 @@ class VmmApp(App):
                 await self._call_tty("fw_update", health.fetch_firmware, self.sys)
         elif key == "network":
             await self._offer_network(h.net)
+        elif key == "shares":
+            if await self._confirm("Update the shared folders?",
+                                   f"Rewrites vmmanager's lines in {self.layout.exports}. "
+                                   "This needs doas."):
+                await self._call(share.sync, self.sys, self.layout)
         else:
             name = key.removeprefix("remove ")
             if await self._confirm(
@@ -386,6 +399,46 @@ class VmmApp(App):
         self.refresh_list()
         if ok and e.internet:
             await self._offer_network()
+
+    async def _set_up_sharing(self) -> bool:
+        """Offer the one-time setup if needed; True when sharing is ready."""
+        L = self.layout
+        needed: list[str] = []
+        if not await self._call(lambda: needed.extend(share.setup_needed(self.sys, L))):
+            return False
+        if not needed:
+            return True
+        anchor = await asyncio.to_thread(network.anchor_current, self.sys, L)
+        files = (f"\n\nChanges {L.sync_script}, {L.rc_local}, the nfsd flags (rcctl set nfsd flags -t -n 4) "
+                 "and the services (rcctl enable and start portmap mountd nfsd)"
+                 + ("" if anchor else " and the vmmanager pf anchor") + ". This needs doas.")
+        if not await self._confirm("Set up folder sharing?", "\n".join(f"- {b}" for b in needed) + files):
+            return False
+        if not anchor and not await self._call(network.setup_network, self.sys, L):
+            return False
+        return await self._call(share.setup_sharing, self.sys, L)
+
+    @work
+    async def action_share(self) -> None:
+        if not (e := self._ready_for("share")):
+            return
+        L = self.layout
+        choice = await self.push_screen_wait(ShareScreen(e.name, e.shared, L.home))
+        if choice is None:
+            return
+        verb, folder = choice
+        if verb == "share":
+            if not await self._set_up_sharing():
+                return
+            question = f"Share {folder} with {e.name}?"
+            detail = f"Writes {L.share_file(e.name)} and updates {L.exports}. This needs doas."
+        else:
+            folder = None
+            question = f"Stop sharing {e.shared} with {e.name}?"
+            detail = f"Deletes {L.share_file(e.name)} and updates {L.exports}. This needs doas."
+        if await self._confirm(question, detail):
+            await self._call(share.set_share, self.sys, L, e.name, folder)
+            self.refresh_list()
 
     @work
     async def action_manual(self) -> None:

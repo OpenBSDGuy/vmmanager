@@ -16,8 +16,9 @@ from vmmanager.layout import Layout
 from vmmanager.ops import VmSpec
 from vmmanager.system import Result
 from vmmanager.ui.app import VmmApp
-from vmmanager.ui.dialogs import ConfirmScreen, HealthScreen, MessageScreen
+from vmmanager.ui.dialogs import ConfirmScreen, FolderPickerScreen, HealthScreen, MessageScreen
 from vmmanager.ui.forms import VmFormScreen
+from vmmanager.ui.share import ShareScreen
 
 FIX = Path(__file__).parent / "fixtures"
 HEALTHY = Health(socket_ok=True, vmd_running=True, firmware=True, doas="ok",
@@ -84,7 +85,7 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
             table = app.query_one(DataTable)
             self.assertEqual(table.row_count, 3)
             self.assertEqual([str(c) for c in table.get_row_at(0)],
-                             ["debian", "stopped", "4", "8G", "on", "kixz"])
+                             ["debian", "stopped", "4", "8G", "on", "kixz", ""])
             self.assertTrue(all(c.style == "dim" for c in table.get_row_at(0)))
             self.assertEqual(self.text(app.query_one("#status", Static)),
                              "not managed by vmmanager — press m to migrate")
@@ -396,6 +397,116 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.click("#no")
             await self.until(pilot, lambda: not app.workers)
         self.assertTrue(tomlio.load(self.layout.state_file)["man_declined"])
+
+    def share_setup(self, needed=("x",)):
+        self.patch("vmmanager.share.setup_needed", return_value=list(needed))
+        self.patch("vmmanager.network.anchor_current", return_value=True)
+        return self.patch("vmmanager.share.setup_sharing"), self.patch("vmmanager.share.set_share")
+
+    async def test_shared_column_shows_folder(self):
+        self.status("")
+        self.managed()
+        self.layout.share_file("web").write_text("/home/kixz/share\n")
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            table = app.query_one(DataTable)
+            col = [str(c.label) for c in table.columns.values()].index("Shared")
+            self.assertEqual(str(table.get_row_at(0)[col]), "/home/kixz/share")
+
+    async def test_share_flow_calls_setup_then_set_share(self):
+        self.status("")
+        self.managed()
+        setup, set_share = self.share_setup()
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            await pilot.press("f")
+            dialog = await self.screen(pilot, ShareScreen)
+            self.assertEqual(dialog.query_one("#folder", Input).value, f"{self.layout.home}/")
+            dialog.query_one("#folder", Input).value = "/home/kixz/share"
+            await pilot.pause()
+            self.assertIn("/home/kixz/share", self.text(dialog.query_one("#guest", Static)))
+            self.assertEqual(list(dialog.query("#stop")), [])
+            dialog.query_one("#share", Button).press()
+            first = await self.screen(pilot, ConfirmScreen)
+            self.assertEqual(first.question, "Set up folder sharing?")
+            self.assertIn("/etc/rc.local", first.detail)
+            await pilot.click("#yes")
+            await self.until(pilot, lambda: isinstance(app.screen, ConfirmScreen) and app.screen is not first)
+            self.assertEqual(app.screen.question, "Share /home/kixz/share with web?")
+            self.assertIn(str(self.layout.share_file("web")), app.screen.detail)
+            self.assertIn("/etc/exports", app.screen.detail)
+            await pilot.click("#yes")
+            await self.until(pilot, lambda: not app.workers)
+        setup.assert_called_once_with(self.sys, self.layout)
+        set_share.assert_called_once_with(self.sys, self.layout, "web", "/home/kixz/share")
+
+    async def test_share_without_internet_explains(self):
+        self.status("")
+        self.managed(text=WEB.replace("  local interface\n", ""))
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            with mock.patch.object(app, "notify") as notify:
+                await pilot.press("f")
+                await pilot.pause()
+            self.assertEqual(notify.call_args.args[0],
+                             "needs internet on: the share runs over the VM's network link")
+            self.assertNotIsInstance(app.screen, ShareScreen)
+
+    async def test_stop_sharing_calls_set_share_none(self):
+        self.status("")
+        self.managed()
+        self.layout.share_file("web").write_text("/home/kixz/share\n")
+        _, set_share = self.share_setup(needed=())
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            await pilot.press("f")
+            dialog = await self.screen(pilot, ShareScreen)
+            self.assertEqual(dialog.query_one("#folder", Input).value, "/home/kixz/share")
+            dialog.query_one("#stop", Button).press()
+            confirm = await self.screen(pilot, ConfirmScreen)
+            self.assertIn(str(self.layout.share_file("web")), confirm.detail)
+            await pilot.click("#yes")
+            await self.until(pilot, lambda: not app.workers)
+        set_share.assert_called_once_with(self.sys, self.layout, "web", None)
+
+    async def test_stale_shares_offer_update_fix(self):
+        self.health = Health(True, True, True, "ok", None, [], None, shares_stale=True)
+        sync = self.patch("vmmanager.share.sync")
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            screen = await self.screen(pilot, HealthScreen)
+            self.assertIn("Shared folders are out of date", self.text(screen.query_one("#problems", Static)))
+            self.assertEqual([str(b.label) for b in screen.query(Button)], ["Update shares", "Continue"])
+            await pilot.click("#fix-0")
+            await self.screen(pilot, ConfirmScreen)
+            self.health = HEALTHY
+            await pilot.click("#yes")
+            await self.until(pilot, lambda: not app.workers)
+        sync.assert_called_once_with(self.sys, self.layout)
+
+    async def test_folder_picker_returns_directory(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        (Path(tmp.name) / "sub").mkdir()
+        (Path(tmp.name) / "file.txt").write_text("x")
+        result = []
+
+        class Host(App):
+            def on_mount(self):
+                self.push_screen(FolderPickerScreen(Path(tmp.name)), result.append)
+
+        async with Host().run_test() as pilot:
+            picker = await self.screen(pilot, FolderPickerScreen)
+            tree = picker.query_one("DirectoryTree")
+            await self.until(pilot, lambda: len(tree.root.children) > 0)
+            self.assertEqual([str(n.label) for n in tree.root.children], ["sub"])
+            await pilot.press("down", "u")
+            await self.until(pilot, lambda: result)
+        self.assertEqual(result, [str(Path(tmp.name) / "sub")])
 
 
 if __name__ == "__main__":
