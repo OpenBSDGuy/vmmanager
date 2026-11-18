@@ -12,25 +12,25 @@ class RootTransaction:
     def __init__(self, sys: System, check: Callable[[], str | None]):
         self.sys = sys
         self.check = check
-        # (path, new content or None to delete, previous content or None, mode)
-        self._staged: list[tuple[Path, str | None, str | None, int]] = []
+        # (path, new content or None to delete, previous content or None, mode to restore, mode to install)
+        self._staged: list[tuple[Path, str | None, str | None, int, int]] = []
 
-    def _stage(self, path: Path, content: str | None) -> None:
+    def _stage(self, path: Path, content: str | None, mode: int | None = None) -> None:
         old = self.sys.read_file(path)
-        mode = 0o644 if old is None else os.stat(path).st_mode & 0o777
-        self._staged.append((path, content, old, mode))
+        old_mode = 0o644 if old is None else os.stat(path).st_mode & 0o777
+        self._staged.append((path, content, old, old_mode, old_mode if mode is None else mode))
 
-    def write(self, path: Path, content: str) -> None:
-        self._stage(path, content)
+    def write(self, path: Path, content: str, mode: int | None = None) -> None:
+        self._stage(path, content, mode)
 
     def delete(self, path: Path) -> None:
         self._stage(path, None)
 
     def commit(self) -> None:
-        touched: list[tuple[Path, str | None, str | None, int]] = []
+        touched: list[tuple[Path, str | None, str | None, int, int]] = []
         try:
             for item in self._staged:
-                path, content, _, mode = item
+                path, content, _, _, mode = item
                 touched.append(item)  # before applying: a failed install may be partial
                 if content is None:
                     self.sys.remove_file(path)
@@ -53,7 +53,7 @@ class RootTransaction:
     def _rollback(self, touched) -> str:
         """Restore every touched file; return a description of any that could not be restored."""
         failures = []
-        for path, _, old, mode in reversed(touched):
+        for path, _, old, mode, _ in reversed(touched):
             try:
                 if old is None:
                     self.sys.remove_file(path)

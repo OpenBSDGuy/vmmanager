@@ -108,6 +108,23 @@ class InventoryTests(unittest.TestCase):
     def test_unmanaged_quoted_owner(self):
         self.assertEqual(self.unmanaged_with_owner('owner "kixz:kixz"').actions, {"migrate"})
 
+    def test_entry_shared_folder(self):
+        self.status(RUNNING)
+        self.managed("kixz", "web")
+        self.layout.share_file("web").write_text("/home/kixz/share\n")
+        self.assertEqual(load_inventory(self.sys, self.layout)[0].shared, "/home/kixz/share")
+
+    def test_share_action_needs_internet(self):
+        with_net = 'vm "web" {\n  owner kixz\n  local interface\n}\n'
+        no_net = 'vm "web" {\n  owner kixz\n}\n'
+        for state, extra in (("stopped", {"start", "run", "update", "delete"}),
+                             ("running", {"connect", "stop"}), ("paused", {"stop"})):
+            self.status(RUNNING.replace("running", state))
+            self.managed("kixz", "web", with_net)
+            self.assertEqual(load_inventory(self.sys, self.layout)[0].actions, extra | {"share"})
+            self.managed("kixz", "web", no_net)
+            self.assertEqual(load_inventory(self.sys, self.layout)[0].actions, extra)
+
 
 if __name__ == "__main__":
     unittest.main()

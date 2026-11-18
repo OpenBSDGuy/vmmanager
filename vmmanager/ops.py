@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from vmmanager import __version__, confblock, tomlio, vmctl
+from vmmanager import __version__, confblock, share, tomlio, vmctl
 from vmmanager.errors import VmmError
 from vmmanager.inventory import VmEntry
 from vmmanager.layout import Layout, quote, validate_name
@@ -132,6 +132,8 @@ def update_vm(sys: System, layout: Layout, name: str, changes: dict[str, object]
         extras["iso"] = changes["cdrom"] or ""
         tomlio.save(layout.extras(name), extras)
     vmctl.reload(sys)
+    if "internet" in changes:
+        share.sync(sys, layout)
 
 
 def delete_vm(sys: System, layout: Layout, name: str) -> None:
@@ -141,9 +143,12 @@ def delete_vm(sys: System, layout: Layout, name: str) -> None:
     _require_stopped(sys, name)
     tx = _tx(sys, layout)
     tx.delete(path)
+    if layout.share_file(name).exists():
+        tx.delete(layout.share_file(name))
     tx.write(layout.aggregate, aggregate_text(layout, exclude=path))
     tx.commit()
     vmctl.reload(sys)
+    share.sync(sys, layout)
 
 
 def remove_vm_files(layout: Layout, name: str) -> None:

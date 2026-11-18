@@ -92,6 +92,10 @@ Delete a stopped VM.
 The configuration is removed first.
 The VM's folder, with its disk, is kept unless you agree to remove it.
 Creating a VM whose name still has a folder is refused.
+.It Ic f
+Share a host folder with the VM, or stop sharing it (see
+.Sx SHARED FOLDERS ) .
+Needs Internet on for the VM.
 .It Ic m
 Migrate a VM that was not created by
 .Nm
@@ -166,6 +170,28 @@ Gets a marked 3-line block, see
 Gets the line
 .Li net.inet.ip.forwarding=1
 whenever it is missing from the file, whatever the running value is.
+.It Pa /etc/vmmanager/<user>/<name>.share
+The folder shared with one VM, one absolute path.
+See
+.Sx SHARED FOLDERS .
+.It Pa /etc/vmmanager/sync-exports
+The script that writes the lines of
+.Nm
+in
+.Pa /etc/exports ,
+run by
+.Nm
+and from
+.Pa /etc/rc.local .
+.It Pa /etc/exports
+Gets two lines per shared VM, see
+.Sx SHARED FOLDERS .
+.It Pa /etc/rc.local
+Gets one added line that runs the sync script at boot, under a
+.Li # added by vmmanager
+comment.
+.It Pa /var/run/exports.lock
+Keeps two runs of the sync script apart.
 .It Pa /usr/local/man/man8/vmmanager.8 , /usr/local/man/man5/vmmanager.toml.5
 The installed pages.
 .El
@@ -174,7 +200,9 @@ Files under
 .Pa /etc/vmmanager
 are
 .Li root:wheel
-mode 0644 and directories 0755.
+mode 0644 and directories 0755, except
+.Pa sync-exports ,
+which is 0755.
 Existing files keep their mode.
 .Sh PRIVILEGES
 Listing VMs needs access to the
@@ -248,6 +276,7 @@ Writes
 .Bd -literal -offset indent
 match out on egress inet from 100.64.0.0/10 to any nat-to (egress)
 pass in quick inet proto { udp tcp } from 100.64.0.0/10 to any port domain rdr-to 127.0.0.1 port domain
+block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }
 .Ed
 .It
 Appends to
@@ -281,7 +310,9 @@ The check at start-up needs no root and runs only if you own a managed VM
 with Internet.
 It only tests that
 .Pa /etc/vmmanager/pf.conf
-exists, that IP forwarding is on, and that unwind or unbound is running.
+matches the current rules (an older file is offered as
+.Dq Update the vmmanager pf rules ) ,
+that IP forwarding is on, and that unwind or unbound is running.
 If the pf rules were flushed by hand, NAT stays off until
 .Ic doas pfctl \-f /etc/pf.conf
 or a reboot, and
@@ -320,6 +351,190 @@ and
 .Ic doas rcctl stop unwind .
 Then
 .Ic doas sysctl net.inet.ip.forwarding=0 .
+.Sh SHARED FOLDERS
+Key
+.Ic f
+shares a folder of the host with one VM over NFS.
+The VM needs Internet on, because the share uses the same
+.Ic local interface
+and the pf rules as
+.Sx NETWORKING .
+Only that VM can mount the folder, and files written in the guest belong to the
+user who owns the VM on the host.
+.Pp
+The first time, and again whenever something below is missing,
+.Nm
+asks first and lists what it will do, all with
+.Xr doas 1 .
+If the pf rules of
+.Sx NETWORKING
+are missing or outdated, the question also names each change of the network setup
+(the lines of
+.Pa /etc/vmmanager/pf.conf
+and
+.Pa /etc/pf.conf ,
+IP forwarding in
+.Pa /etc/sysctl.conf ,
+the resolver) before anything runs.
+The setup steps are:
+.Bl -bullet
+.It
+Installs
+.Pa /etc/vmmanager/sync-exports
+and adds a line that runs it to
+.Pa /etc/rc.local ,
+under a
+.Li # added by vmmanager
+comment.
+.It
+Sets the
+.Xr nfsd 8
+flags to
+.Li \-t \-n 4
+(TCP only, 4 server processes) and enables
+.Xr portmap 8 ,
+.Xr mountd 8
+and
+.Xr nfsd 8 .
+They are not started yet:
+.Xr mountd 8
+and
+.Xr nfsd 8
+refuse to start while
+.Pa /etc/exports
+has no line that is not a comment.
+.Nm
+starts whichever of the three is not running after the first share has
+written its line.
+.It
+Updates
+.Pa /etc/vmmanager/pf.conf
+with a line that blocks the NFS ports (sunrpc and nfsd) from everything
+outside 100.64.0.0/10, and reloads it.
+.El
+.Pp
+Sharing a folder writes
+.Pa /etc/vmmanager/<user>/<name>.share
+and runs the sync script, which holds the lock
+.Pa /var/run/exports.lock ,
+reads the VM ids from
+.Ic vmctl status ,
+and rewrites its lines in
+.Pa /etc/exports
+before it signals
+.Xr mountd 8 .
+Each shared VM gets two lines, a marker and the export:
+.Bd -literal -offset indent
+# vmmanager: the next line is managed by vmmanager (<name>)
+/home/user/folder \-mapall=<user> 100.64.<id>.3
+.Ed
+.Pp
+The address 100.64.<id>.3 is the one
+.Xr vmd 8
+gives that VM, so no other VM can mount the folder.
+Lines without the marker are never touched.
+Stopping the share, deleting the VM or turning its Internet off removes the
+lines again.
+.Pp
+The folder is not a hard boundary.
+The kernel exports a whole file system to an address, and
+.Xr mountd 8
+only checks the folder when the guest mounts.
+Root inside the guest can craft NFS file handles that reach any file on the
+same file system, with the rights of the user who owns the VM.
+Other VMs and the local network still cannot mount anything.
+To share a folder with a VM you do not trust, put the folder on its own
+file system (a separate partition).
+.Pp
+The folder must exist and its path must be absolute, without spaces,
+.Ql # ,
+.Ql \e ,
+.Ql $ ,
+.Ql % ,
+backticks or quotes.
+.Nm
+refuses to share
+.Pa /
+(the whole filesystem) and says to choose a folder inside it.
+.Pp
+The VM's ids change when
+.Xr vmd 8
+restarts.
+.Nm
+therefore reruns the sync script at boot, from
+.Pa /etc/rc.local .
+.Pp
+Boot window:
+.Xr mountd 8
+reads the old
+.Pa /etc/exports
+before
+.Xr vmd 8
+assigns the new ids, and the sync script corrects it some seconds later.
+For that time a line can point at the wrong VM.
+VMs made by
+.Nm
+never start at boot (they are
+.Ic disable ) ,
+so only a hand-written VM that is
+.Ic enable Ns d
+could be affected, and the VM that
+.Xr dockerctl 8
+starts from
+.Va pkg_scripts ,
+which runs before
+.Pa /etc/rc.local .
+A stale line can, until the sync, point at whatever VM now has that id.
+.Pp
+The guest side is not set up by
+.Nm
+because it needs root in the guest.
+Run these there, as root; the host is the guest's default gateway.
+Debian and Ubuntu need
+.Ic apt install nfs-common .
+To mount the folder now, in a Linux guest:
+.Bd -literal -offset indent
+mkdir -p /mnt/share
+mount -t nfs -o vers=3,proto=tcp,nolock "$(/sbin/ip route | awk '/default/{print $3}'):FOLDER" /mnt/share
+.Ed
+.Pp
+and in an OpenBSD guest:
+.Bd -literal -offset indent
+mkdir -p /mnt/share
+mount_nfs -T "$(/sbin/route -n get default | awk '/gateway:/{print $2}'):FOLDER" /mnt/share
+.Ed
+.Pp
+Replace FOLDER with the shared path.
+To mount it at every guest boot, add one line with
+.Ic crontab \-e
+as root.
+Linux:
+.Bd -literal -offset indent
+@reboot mkdir -p /mnt/share; for i in 1 2 3 4 5 6; do mount -t nfs -o vers=3,proto=tcp,nolock "$(/sbin/ip route | awk '/default/{print $3}'):FOLDER" /mnt/share && break; sleep 10; done
+.Ed
+.Pp
+OpenBSD:
+.Bd -literal -offset indent
+@reboot mkdir -p /mnt/share; for i in 1 2 3 4 5 6; do /sbin/mount_nfs -T "$(/sbin/route -n get default | awk '/gateway:/{print $2}'):FOLDER" /mnt/share && break; sleep 10; done
+.Ed
+.Pp
+The loop retries because the network may not be up yet at boot.
+.Pp
+.Xr mountd 8
+has no fixed port on OpenBSD 8.0, so pf cannot block it by port.
+Someone on the local network who scans for it can read the export list, but
+cannot mount a folder, as only the VM's address is allowed.
+.Pp
+The health check says
+.Dq Shared folders are out of date
+if
+.Pa /etc/exports
+does not match the
+.Pa *.share
+files, for example after someone edited it by hand.
+The fix
+.Dq Update shares
+runs the sync script.
 .Sh MIGRATING
 A VM that is in
 .Xr vm.conf 5
@@ -482,7 +697,16 @@ that
 .Ic vmd \-n
 passes.
 If a VM folder was deleted by hand, the check names the broken VM and, for
-its owner, offers to remove its configuration.
+its owner, offers to remove its configuration;
+.It
+that your shared folders match
+.Pa /etc/exports ,
+only when
+.Pa /etc/vmmanager/sync-exports
+exists.
+If not, it says "Shared folders are out of date" and offers
+.Ic Update shares ,
+which runs the sync script.
 .El
 .Sh UNINSTALL
 Do the steps in this order, so that
@@ -491,6 +715,16 @@ and
 .Xr vm.conf 5
 never point at files that are gone.
 .Bl -enum
+.It
+If you shared folders, stop sharing every VM first: press
+.Ic f
+on each shared VM with Internet on and choose to stop sharing.
+By hand instead, delete each
+.Li # vmmanager:
+marker line and the line after it from
+.Pa /etc/exports ,
+then run
+.Ic doas pkill \-HUP \-x mountd .
 .It
 Remove the program:
 .Bd -literal -offset indent
@@ -530,6 +764,25 @@ run
 .Ic doas vmd \-n
 and
 .Ic doas vmctl reload .
+.It
+If you shared folders, delete the line that runs
+.Pa /etc/vmmanager/sync-exports
+(and its
+.Li # added by vmmanager
+comment) from
+.Pa /etc/rc.local ,
+then remove the script:
+.Bd -literal -offset indent
+doas rm /etc/vmmanager/sync-exports
+.Ed
+.Pp
+Then run
+.Ic doas rcctl disable portmap mountd nfsd
+and
+.Ic doas rcctl stop portmap mountd nfsd ,
+unless
+.Xr dockerctl 8
+or you use NFS for something else.
 .It
 Only now delete the configuration:
 .Ic doas rm \-r /etc/vmmanager .

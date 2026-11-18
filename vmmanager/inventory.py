@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from vmmanager import confblock, vmctl
+from vmmanager import confblock, share, vmctl
 from vmmanager.confblock import BlockFacts
 from vmmanager.errors import VmmError
 from vmmanager.layout import Layout
@@ -21,6 +21,7 @@ class VmEntry:
     facts: BlockFacts | None
     conf_path: Path | None
     unreadable: bool = False  # vm.conf block shares a line with other tokens
+    shared: str | None = None
 
     @property
     def state(self) -> str:
@@ -36,11 +37,12 @@ class VmEntry:
             return frozenset()
         if not self.managed:
             return frozenset({"migrate"}) if self.facts else frozenset()
+        extra = {"share"} if self.internet else set()
         if self.state == "running":
-            return frozenset({"connect", "stop"})
+            return frozenset({"connect", "stop"} | extra)
         if self.state == "paused":
-            return frozenset({"stop"})
-        return frozenset({"start", "run", "update", "delete"})
+            return frozenset({"stop"} | extra)
+        return frozenset({"start", "run", "update", "delete"} | extra)
 
     @property
     def reason(self) -> str | None:
@@ -75,8 +77,9 @@ def load_inventory(sys: System, layout: Layout) -> list[VmEntry]:
     for path in layout.etc_dir.glob("*/*.conf"):
         owner, name = path.parent.name, path.stem
         facts, _ = _block_facts(sys.read_file(path) or "", name)
-        entries[name] = VmEntry(name, statuses.get(name), owner, True,
-                                owner == layout.user, facts, path)
+        mine = owner == layout.user
+        entries[name] = VmEntry(name, statuses.get(name), owner, True, mine, facts, path,
+                                shared=share.folder(layout, name) if mine else None)
     for name, st in statuses.items():
         if name in entries:
             continue

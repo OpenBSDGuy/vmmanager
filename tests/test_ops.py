@@ -190,6 +190,24 @@ class OpsTests(unittest.TestCase):
         ops.remove_vm_files(self.layout, "deb")
         self.assertFalse(self.layout.vm_dir("deb").exists())
 
+    def test_delete_removes_share_and_syncs(self):
+        ops.create_vm(self.sys, self.layout, VmSpec("deb"))
+        self.layout.share_file("deb").write_text("/home/u/share\n")
+        with mock.patch("vmmanager.share.sync",
+                        side_effect=lambda *a: self.sys.calls.append((["SYNC"], True))):
+            ops.delete_vm(self.sys, self.layout, "deb")
+        self.assertFalse(self.layout.share_file("deb").exists())
+        cmds = self.commands()
+        self.assertGreater(cmds.index(["SYNC"]), cmds.index(["vmctl", "reload"]))
+
+    def test_update_internet_change_syncs(self):
+        ops.create_vm(self.sys, self.layout, VmSpec("deb"))
+        with mock.patch("vmmanager.share.sync") as sync:
+            ops.update_vm(self.sys, self.layout, "deb", {"memory": "2G"})
+            sync.assert_not_called()
+            ops.update_vm(self.sys, self.layout, "deb", {"internet": False})
+            sync.assert_called_once_with(self.sys, self.layout)
+
     def block(self, *lines):
         return 'vm "t" {\n' + "".join(f"  {l}\n" for l in lines) + "}\n"
 

@@ -39,6 +39,18 @@ class Layout:
         return self.etc_dir / "pf.conf"
 
     @property
+    def exports(self) -> Path:
+        return self.etc / "exports"
+
+    @property
+    def rc_local(self) -> Path:
+        return self.etc / "rc.local"
+
+    @property
+    def sync_script(self) -> Path:
+        return self.etc_dir / "sync-exports"
+
+    @property
     def user_dir(self) -> Path:
         return self.home / "vmmanager"
 
@@ -61,6 +73,9 @@ class Layout:
 
     def system_conf(self, name: str, user: str | None = None) -> Path:
         return self.etc_dir / (user or self.user) / f"{name}.conf"
+
+    def share_file(self, name: str, user: str | None = None) -> Path:
+        return self.etc_dir / (user or self.user) / f"{name}.share"
 
 
 def validate_name(name: str) -> None:

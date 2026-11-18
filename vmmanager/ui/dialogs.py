@@ -1,4 +1,4 @@
-"""Modal dialogs: ConfirmScreen, MessageScreen, IsoPickerScreen and HealthScreen."""
+"""Modal dialogs: ConfirmScreen, MessageScreen, IsoPickerScreen, FolderPickerScreen and HealthScreen."""
 
 from pathlib import Path
 
@@ -135,6 +135,34 @@ class IsoPickerScreen(Dialog):
     @on(DirectoryTree.FileSelected)
     def picked(self, event: DirectoryTree.FileSelected) -> None:
         self.dismiss(str(event.path))
+
+
+class FolderTree(IsoTree):
+    def filter_paths(self, paths):
+        return [p for p in paths if (self.show_hidden or not p.name.startswith(".")) and p.is_dir()]
+
+
+class FolderPickerScreen(IsoPickerScreen):
+    """Browse for a folder; dismisses with the highlighted folder's path or None."""
+
+    BINDINGS = [("u", "use", "Use this folder")]
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="box"):
+            yield Static("Choose a folder: Enter opens it, u uses it (. shows hidden folders, Escape cancels)",
+                         classes="title", markup=False)
+            yield FolderTree(self.start)
+            with Horizontal():
+                yield Button("Use this folder", id="use", variant="primary")
+
+    def action_use(self) -> None:
+        node = self.query_one(FolderTree).cursor_node
+        if node and node.data:
+            self.dismiss(str(node.data.path))
+
+    @on(Button.Pressed)
+    def pressed(self) -> None:
+        self.action_use()
 
 
 class HealthScreen(Dialog):
