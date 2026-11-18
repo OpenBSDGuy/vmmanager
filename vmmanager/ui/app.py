@@ -2,7 +2,6 @@
 
 import asyncio
 import contextlib
-import os
 
 from rich.text import Text
 from textual import on, work
@@ -13,7 +12,6 @@ from vmmanager import health, inventory, manpages, migrate, network, ops, share
 from vmmanager.errors import VmmError
 from vmmanager.inventory import VmEntry
 from vmmanager.layout import Layout
-from vmmanager.sync_exports import valid_folder
 from vmmanager.system import System
 from vmmanager.ui.dialogs import ConfirmScreen, HealthScreen, MessageScreen
 from vmmanager.ui.forms import VmFormScreen
@@ -411,12 +409,14 @@ class VmmApp(App):
         if not needed:
             return True
         explain = ""
-        if not network.anchor_current(self.sys, L):
+        if not await asyncio.to_thread(network.anchor_current, self.sys, L):
             try:
-                explain = "\n\nThe networking part:\n" + network.setup_explanation(network.net_status(self.sys, L))
+                st = await asyncio.to_thread(network.net_status, self.sys, L)
             except VmmError as err:
                 await self.push_screen_wait(MessageScreen(err.message, err.detail))
                 return False
+            explain = "\n\nThe networking part:\n" + network.setup_explanation(st)
+            needed = [b for b in needed if b != share.PF_BULLET]  # the networking part says it
         files = (f"\n\nChanges {L.sync_script}, {L.rc_local}, the nfsd flags (rcctl set nfsd flags -t -n 4) "
                  "and the services (rcctl enable and start portmap mountd nfsd)"
                  + ". This needs doas." + explain)
@@ -436,12 +436,7 @@ class VmmApp(App):
             return
         verb, folder = choice
         if verb == "share":
-            if not valid_folder(folder):
-                await self.push_screen_wait(MessageScreen(
-                    f"Cannot share {folder!r}", "use an absolute path without spaces, # \\ or quotes"))
-                return
-            if not os.path.isdir(folder):
-                await self.push_screen_wait(MessageScreen(f"Cannot share {folder}", "the folder does not exist"))
+            if not await self._call(share.check_folder, folder):
                 return
             if not await self._set_up_sharing():
                 return

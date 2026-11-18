@@ -555,6 +555,25 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
         setup.assert_not_called()
         set_share.assert_not_called()
 
+    async def test_share_of_empty_or_root_folder_is_refused_before_any_setup(self):
+        self.status("")
+        self.managed()
+        setup, set_share = self.share_setup()
+        app = VmmApp(self.sys, self.layout)
+        async with app.run_test() as pilot:
+            await self.started(pilot)
+            for typed, message in (("", "Cannot share ''"), ("/", "Refusing to share the whole filesystem (/)")):
+                await pilot.press("f")
+                dialog = await self.screen(pilot, ShareScreen)
+                dialog.query_one("#folder", Input).value = typed
+                dialog.query_one("#share", Button).press()
+                msg = await self.screen(pilot, MessageScreen)
+                self.assertEqual(msg.message, message)
+                await pilot.click("#ok")
+                await self.until(pilot, lambda: app.screen is app.screen_stack[0] and not app.workers)
+        setup.assert_not_called()
+        set_share.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

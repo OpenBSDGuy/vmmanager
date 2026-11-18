@@ -36,6 +36,9 @@ def bundled_script() -> str:
     return importlib.resources.files("vmmanager").joinpath("sync_exports.py").read_text()
 
 
+PF_BULLET = "Update the vmmanager pf rules (keeps NFS off the local network)"
+
+
 def setup_needed(sys: System, layout: Layout) -> list[str]:
     bullets = []
     if sys.read_file(layout.sync_script) != bundled_script():
@@ -45,7 +48,7 @@ def setup_needed(sys: System, layout: Layout) -> list[str]:
     if any(sys.run(["rcctl", "check", svc], check=False).rc != 0 for svc in NFS_SERVICES):
         bullets.append("Enable and start the NFS services portmap, mountd and nfsd (TCP only, 4 server processes)")
     if not anchor_current(sys, layout):
-        bullets.append("Update the vmmanager pf rules (keeps NFS off the local network)")
+        bullets.append(PF_BULLET)
     return bullets
 
 
@@ -76,12 +79,18 @@ def _sync_problem(sys: System, layout: Layout) -> str | None:
     return r.err if r.rc != 0 else None
 
 
+def check_folder(folder: str) -> None:
+    if folder.startswith("/") and os.path.normpath(folder).lstrip("/") == "":
+        raise VmmError("Refusing to share the whole filesystem (/)", detail="choose a folder inside it")
+    if not valid_folder(folder):
+        raise VmmError(f"Cannot share {folder!r}", detail="use an absolute path without spaces, # \\ or quotes")
+    if not os.path.isdir(folder):
+        raise VmmError(f"Cannot share {folder}", detail="the folder does not exist")
+
+
 def set_share(sys: System, layout: Layout, name: str, folder: str | None) -> None:
     if folder is not None:
-        if not valid_folder(folder):
-            raise VmmError(f"Cannot share {folder!r}", detail="use an absolute path without spaces, # \\ or quotes")
-        if not os.path.isdir(folder):
-            raise VmmError(f"Cannot share {folder}", detail="the folder does not exist")
+        check_folder(folder)
     tx = RootTransaction(sys, lambda: _sync_problem(sys, layout))
     if folder is None:
         tx.delete(layout.share_file(name))

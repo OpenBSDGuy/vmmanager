@@ -108,12 +108,25 @@ class NetworkTests(unittest.TestCase):
     def test_explanation_lists_only_missing(self):
         self.layout.pf_anchor.parent.mkdir()
         self.layout.pf_anchor.write_text(ANCHOR_RULES)
+        self.layout.pf_conf.write_text(PF + pf_lines(self.layout))
+        self.layout.sysctl_conf.write_text("net.inet.ip.forwarding=1\n")
         self.sys.responses[("sysctl", "-n")] = Result(0, "1\n", "")
         text = setup_explanation(net_status(self.sys, self.layout))
         self.assertIn("unwind", text)
         self.assertEqual(setup_explanation(net_status(self.sys, self.layout)).count("\n"), 0)
         self.assertNotIn("forwarding", text)
         self.assertNotIn("NAT", text)
+
+    def test_explanation_for_outdated_anchor_names_pf_conf(self):
+        self.layout.pf_anchor.parent.mkdir()
+        self.layout.pf_anchor.write_text(OLD_ANCHOR)
+        self.assertIn("/etc/pf.conf", setup_explanation(net_status(self.sys, self.layout)))
+
+    def test_explanation_names_sysctl_conf_when_forwarding_is_live_but_not_saved(self):
+        self.sys.responses[("sysctl", "-n")] = Result(0, "1\n", "")
+        text = setup_explanation(net_status(self.sys, self.layout))
+        self.assertIn("/etc/sysctl.conf", text)
+        self.assertNotIn("Turn on IP forwarding", text)
 
     def test_anchor_blocks_nfs_from_outside_vm_network(self):
         self.assertIn("block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }\n", ANCHOR_RULES)

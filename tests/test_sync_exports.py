@@ -28,6 +28,11 @@ class Base(unittest.TestCase):
 
 
 class WantedLinesTests(Base):
+    def test_valid_folder_refuses_the_whole_filesystem(self):
+        for path in ("/", "//", "/.", "/a/.."):
+            self.assertFalse(valid_folder(path), path)
+        self.assertTrue(valid_folder("/a/b"))
+
     def test_line_per_shared_vm_with_internet(self):
         share = self.tmp / "share"
         share.mkdir()

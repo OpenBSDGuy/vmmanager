@@ -36,7 +36,8 @@ class ShareScreen(Dialog):
             yield Static(share.guest_commands(start), id="guest", markup=False)
 
     def _chosen(self) -> str:
-        return self.query_one("#folder", Input).value.strip().rstrip("/") or "/"
+        value = self.query_one("#folder", Input).value.strip()
+        return value.rstrip("/") or value  # "" and "/" stay as typed; share.check_folder rejects them
 
     @on(Input.Changed)
     def changed(self) -> None:
