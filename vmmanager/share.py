@@ -62,8 +62,8 @@ def setup_sharing(sys: System, layout: Layout) -> None:
     elif line not in rc.splitlines():
         tx.write(layout.rc_local, rc + "\n# added by vmmanager\n" + line + "\n")
     tx.commit()
-    sys.run(["rcctl", "set", "nfsd", "flags", "-t", "-n", "4"], root=True)
     sys.run(["rcctl", "enable", *NFS_SERVICES], root=True)  # not started: mountd and nfsd refuse to start until /etc/exports has a non-comment line
+    sys.run(["rcctl", "set", "nfsd", "flags", "-t", "-n", "4"], root=True)  # after enable: rcctl refuses flags on a disabled daemon
 
 
 def folder(layout: Layout, name: str) -> str | None:

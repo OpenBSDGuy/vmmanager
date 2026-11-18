@@ -92,9 +92,9 @@ class ShareTests(unittest.TestCase):
         self.assertEqual(self.L.sync_script.read_text(), share.bundled_script())
         self.assertEqual(self.sys.modes[self.L.sync_script], 0o755)
         self.assertEqual(self.L.rc_local.read_text(), "echo hi\n\n# added by vmmanager\n" + line + "\n")
-        self.assertEqual(self.roots(), [
-            ["rcctl", "set", "nfsd", "flags", "-t", "-n", "4"],
-            ["rcctl", "enable", "portmap", "mountd", "nfsd"]])  # no start: rc_pre needs a line in /etc/exports
+        self.assertEqual(self.roots(), [  # rcctl refuses to set flags on a daemon that is not enabled
+            ["rcctl", "enable", "portmap", "mountd", "nfsd"],  # no start: rc_pre needs a line in /etc/exports
+            ["rcctl", "set", "nfsd", "flags", "-t", "-n", "4"]])
 
     def test_setup_leaves_existing_rc_line_and_creates_missing_rc_local(self):
         line = share.rc_line(self.L)
