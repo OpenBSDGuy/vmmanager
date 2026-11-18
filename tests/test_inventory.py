@@ -108,10 +108,6 @@ class InventoryTests(unittest.TestCase):
     def test_unmanaged_quoted_owner(self):
         self.assertEqual(self.unmanaged_with_owner('owner "kixz:kixz"').actions, {"migrate"})
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_entry_shared_folder(self):
         self.status(RUNNING)
         self.managed("kixz", "web")
@@ -128,3 +124,7 @@ if __name__ == "__main__":
             self.assertEqual(load_inventory(self.sys, self.layout)[0].actions, extra | {"share"})
             self.managed("kixz", "web", no_net)
             self.assertEqual(load_inventory(self.sys, self.layout)[0].actions, extra)
+
+
+if __name__ == "__main__":
+    unittest.main()
