@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests.fakes import FakeSystem
@@ -127,6 +128,18 @@ class NetworkTests(unittest.TestCase):
         text = setup_explanation(net_status(self.sys, self.layout))
         self.assertIn("/etc/sysctl.conf", text)
         self.assertNotIn("Turn on IP forwarding", text)
+
+    def test_status_does_not_ask_for_root_when_pf_conf_is_unreadable(self):
+        real = open
+
+        def deny_pf_conf(path, *a, **kw):
+            if path == self.layout.pf_conf:
+                raise PermissionError
+            return real(path, *a, **kw)
+        with mock.patch("builtins.open", deny_pf_conf):
+            st = net_status(self.sys, self.layout)
+        self.assertTrue(st.pf_lines)
+        self.assertFalse(any(root for _, root in self.sys.calls))
 
     def test_anchor_blocks_nfs_from_outside_vm_network(self):
         self.assertIn("block return in quick on ! lo0 proto { tcp udp } from ! 100.64.0.0/10 to port { sunrpc nfsd }\n", ANCHOR_RULES)

@@ -62,16 +62,26 @@ def anchor_current(sys: System, layout: Layout) -> bool:
     return sys.read_file(layout.pf_anchor) == ANCHOR_RULES
 
 
-def _forwarding_saved(sys: System, layout: Layout) -> bool:
-    text = sys.read_file(layout.sysctl_conf) or ""
+def _forwarding_saved(text: str) -> bool:
     return FORWARDING in (l.strip() for l in text.splitlines() if not l.lstrip().startswith("#"))
+
+
+def _read_without_root(path) -> str | None:
+    """File text, "" when absent, None when unreadable: the status check must not ask for doas."""
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+    except PermissionError:
+        return None
 
 
 def net_status(sys: System, layout: Layout) -> NetStatus:
     return NetStatus(anchor_current(sys, layout), _forwarding_on(sys), _resolver_up(sys),
                      layout.pf_anchor.exists() and not anchor_current(sys, layout),
-                     ANCHOR_LINE in (sys.read_file(layout.pf_conf) or "").splitlines(),
-                     _forwarding_saved(sys, layout))
+                     (pf := _read_without_root(layout.pf_conf)) is None or ANCHOR_LINE in pf.splitlines(),
+                     (sc := _read_without_root(layout.sysctl_conf)) is None or _forwarding_saved(sc))
 
 
 def setup_network(sys: System, layout: Layout) -> None:
@@ -97,7 +107,7 @@ def setup_network(sys: System, layout: Layout) -> None:
     if not _forwarding_on(sys):
         sys.run(["sysctl", FORWARDING], root=True)
     text = sys.read_file(layout.sysctl_conf) or ""
-    if not _forwarding_saved(sys, layout):
+    if not _forwarding_saved(text):
         tx = RootTransaction(sys, lambda: None)
         tx.write(layout.sysctl_conf, text + ("" if text.endswith("\n") or not text else "\n") + FORWARDING + "\n")
         tx.commit()
