@@ -45,7 +45,10 @@ def setup_needed(sys: System, layout: Layout) -> list[str]:
         bullets.append(f"Install the sync script {layout.sync_script} (writes vmmanager's lines in /etc/exports)")
     if rc_line(layout) not in (sys.read_file(layout.rc_local) or "").splitlines():
         bullets.append("Run the sync script at boot (adds a line to /etc/rc.local)")
-    if any(sys.run(["rcctl", "get", svc, "status"], check=False).rc != 0 for svc in NFS_SERVICES):
+    enabled = all(sys.run(["rcctl", "get", svc, "status"], check=False).rc == 0 for svc in NFS_SERVICES)
+    # setup sets the flags after enabling, so a failed run can leave nfsd enabled with its default flags
+    tcp_only = sys.run(["rcctl", "get", "nfsd", "flags"], check=False).out.strip() == "-t -n 4"
+    if not (enabled and tcp_only):
         bullets.append("Enable the NFS services portmap, mountd and nfsd (TCP only, 4 server processes)")
     if not anchor_current(sys, layout):
         bullets.append(PF_BULLET)

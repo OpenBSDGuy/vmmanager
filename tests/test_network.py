@@ -150,6 +150,8 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(setup_question(outdated), "Update the vmmanager pf rules?")
         missing = NetStatus(False, True, True)
         self.assertEqual(setup_question(missing), "Set up networking so VMs can reach the internet?")
+        outdated_and_not_saved = NetStatus(False, True, True, anchor_outdated=True, sysctl_saved=False)
+        self.assertEqual(setup_question(outdated_and_not_saved), "Set up networking so VMs can reach the internet?")
         outdated_and_no_resolver = NetStatus(False, True, False, anchor_outdated=True)
         self.assertEqual(setup_question(outdated_and_no_resolver), "Set up networking so VMs can reach the internet?")
 

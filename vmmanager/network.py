@@ -33,7 +33,7 @@ class NetStatus:
 
 
 def setup_question(st: NetStatus) -> str:
-    if st.anchor_outdated and st.forwarding and st.resolver:
+    if st.anchor_outdated and st.forwarding and st.resolver and st.sysctl_saved:
         return "Update the vmmanager pf rules?"
     return "Set up networking so VMs can reach the internet?"
 

@@ -420,8 +420,8 @@ class VmmApp(App):
                 return False
             explain = "\n\nThe networking part:\n" + network.setup_explanation(st)
             needed = [b for b in needed if b != share.PF_BULLET]  # the networking part says it
-        files = (f"\n\nChanges {L.sync_script}, {L.rc_local}, the nfsd flags (rcctl set nfsd flags -t -n 4) "
-                 "and the services (rcctl enable portmap mountd nfsd)"
+        files = (f"\n\nChanges {L.sync_script}, {L.rc_local}, the services (rcctl enable portmap mountd nfsd) "
+                 "and the nfsd flags (rcctl set nfsd flags -t -n 4)"
                  + ". This needs doas." + explain)
         if not await self._confirm("Set up folder sharing?", "\n".join(f"- {b}" for b in needed) + files):
             return False

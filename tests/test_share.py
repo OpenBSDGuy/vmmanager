@@ -112,7 +112,12 @@ class ShareTests(unittest.TestCase):
         self.L.rc_local.write_text(share.rc_line(self.L) + "\n")
         self.L.pf_anchor.write_text(ANCHOR_RULES)
         self.sys.responses[("rcctl", "get")] = Result(0, "", "")
+        self.sys.responses[("rcctl", "get", "nfsd", "flags")] = Result(0, "-t -n 4\n", "")
         self.assertEqual(share.setup_needed(self.sys, self.L), [])
+        # enabled, but `rcctl set nfsd flags` failed last time: nfsd still has its default flags
+        self.sys.responses[("rcctl", "get", "nfsd", "flags")] = Result(0, "-tun 4\n", "")
+        self.assertEqual(len(share.setup_needed(self.sys, self.L)), 1)
+        self.sys.responses[("rcctl", "get", "nfsd", "flags")] = Result(0, "-t -n 4\n", "")
         self.sys.responses[("rcctl", "get")] = Result(1, "", "")
         self.assertEqual(len(share.setup_needed(self.sys, self.L)), 1)
 
