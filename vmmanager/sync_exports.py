@@ -70,8 +70,16 @@ def sync(etc_dir: Path, exports: Path, lock: Path, status_text: str) -> list[str
 
 
 def main() -> int:
-    out = subprocess.run(["vmctl", "status"], capture_output=True, text=True).stdout
-    for p in sync(Path("/etc/vmmanager"), Path("/etc/exports"), Path("/var/run/exports.lock"), out):
+    # no status means no ids: syncing then would strip every share, so leave /etc/exports alone
+    try:
+        r = subprocess.run(["vmctl", "status"], capture_output=True, text=True)
+    except OSError as e:
+        print(f"vmctl status: {e}", file=sys.stderr)
+        return 1
+    if r.returncode != 0:
+        print(f"vmctl status failed: {r.stderr.strip()}", file=sys.stderr)
+        return 1
+    for p in sync(Path("/etc/vmmanager"), Path("/etc/exports"), Path("/var/run/exports.lock"), r.stdout):
         print(p, file=sys.stderr)
     return 0
 

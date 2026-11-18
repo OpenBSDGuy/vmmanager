@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from vmmanager.sync_exports import MARK, exports_with, parse_ids, sync, valid_folder, wanted_lines
+from vmmanager.sync_exports import MARK, exports_with, main, parse_ids, sync, valid_folder, wanted_lines
 
 STATUS = """\
    ID   PID VCPUS  MAXMEM  CURMEM     TTY        OWNER    STATE NAME
@@ -97,6 +97,20 @@ class SyncTests(Base):
             sync(self.etc, self.exports, self.lock, STATUS)
         run.assert_not_called()
         self.assertEqual(self.exports.stat().st_mtime, 1)
+
+
+class MainTests(unittest.TestCase):
+    def check_no_sync(self, **run_kw):
+        with mock.patch("subprocess.run", **run_kw), \
+             mock.patch("vmmanager.sync_exports.sync") as sync_:
+            self.assertEqual(main(), 1)
+        sync_.assert_not_called()
+
+    def test_vmctl_failure_does_not_sync(self):
+        self.check_no_sync(return_value=mock.Mock(returncode=1, stdout="", stderr="vmctl: connect failed"))
+
+    def test_missing_vmctl_does_not_sync(self):
+        self.check_no_sync(side_effect=FileNotFoundError("vmctl"))
 
 
 if __name__ == "__main__":
